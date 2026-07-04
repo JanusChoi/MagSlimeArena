@@ -21,6 +21,7 @@ func setup(y: float) -> void:
 
 func reset() -> void:
 	_triggered = false
+	queue_redraw()
 
 
 func check_players(player1: Node2D, player2: Node2D) -> void:
@@ -35,7 +36,7 @@ func check_players(player1: Node2D, player2: Node2D) -> void:
 		if player.global_position.y <= finish_y:
 			_triggered = true
 			var winner_id: int = player.get("player_id") if player.get("player_id") != null else 0
-			player_crossed.emit(winner_id, _winner_name(winner_id))
+			player_crossed.emit(winner_id, GameSession.player_tag(winner_id))
 			return
 
 
@@ -58,10 +59,4 @@ func _draw() -> void:
 
 
 func _winner_name(player_id: int) -> String:
-	match player_id:
-		1:
-			return "N-Pole (Player 1)"
-		2:
-			return "S-Pole (Player 2)"
-		_:
-			return "Player"
+	return GameSession.player_tag(player_id)

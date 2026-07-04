@@ -53,4 +53,4 @@ func _update_visual() -> void:
 			_visual.scale = Vector2.ONE
 		_visual.position.x = 0.0 if wall_side == 0 else (-10.0 if wall_side < 0 else 10.0)
 	if _label:
-		_label.text = "N" if is_north_pole else "S"
+		_label.visible = false

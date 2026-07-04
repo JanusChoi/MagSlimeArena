@@ -52,6 +52,14 @@ git push
 
 改完游戏 → 再跑 `./scripts/export-web.sh` → commit `web/` → push → Vercel 自动部署。
 
+**UI 均为英文 ASCII**，适合 Web 静态托管，无需额外字体。
+
+## 5. 流程说明
+
+- 入口：`title_screen.tscn`（START → 7局4胜）
+- 局间不 reload 场景，比分由 `GameSession` Autoload 保持
+- Match 结束：**PLAY AGAIN**（新 Match）/ **MENU**（回封面）
+
 ## 说明
 
 - 当前为**单线程 Web 导出**，无需额外 COOP/COEP 响应头。

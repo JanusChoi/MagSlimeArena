@@ -62,6 +62,25 @@ func get_lava_screen_fraction() -> float:
 	return lava_screen_fraction
 
 
+func reset_for_round(player1: Node2D, player2: Node2D, spawn_leader_y: float, finish_y: float) -> void:
+	_player1 = player1
+	_player2 = player2
+	_finish_y = finish_y
+	_scroll_active = false
+	_elapsed = 0.0
+	_can_trigger_next_step = true
+	var half_viewport := get_viewport_rect().size.y * 0.5
+	_max_cam_y = _spawn_camera_y(spawn_leader_y)
+	_min_cam_y = maxf(half_viewport, _spawn_camera_y(finish_y))
+	_base_cam_y = _max_cam_y
+	_scroll_anchor_y = _base_cam_y
+	position.y = _base_cam_y
+
+
+func get_countdown_display() -> int:
+	return int(ceil(get_time_until_scroll()))
+
+
 func _process(delta: float) -> void:
 	if _player1 == null or _player2 == null:
 		return

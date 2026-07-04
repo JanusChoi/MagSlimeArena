@@ -10,11 +10,4 @@ color = Color(0.25, 0.55, 1, 0.85)
 polygon = PackedVector2Array(28, 0, 25.739, 11.432, 19.799, 19.799, 11.432, 25.739, 0, 28, -11.432, 25.739, -19.799, 19.799, -25.739, 11.432, -28, 0, -25.739, -11.432, -19.799, -19.799, -11.432, -25.739, 0, -28, 11.432, -25.739, 19.799, -19.799, 25.739, -11.432)
 
 [node name="PolarityLabel" type="Label" parent="."]
-offset_left = -20.0
-offset_top = -36.0
-offset_right = 20.0
-offset_bottom = -12.0
-theme_override_font_sizes/font_size = 18
-text = "N"
-horizontal_alignment = 1
-vertical_alignment = 1
+visible = false

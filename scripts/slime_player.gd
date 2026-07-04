@@ -79,7 +79,7 @@ const _INPUT_KEYS := {
 		"jump": KEY_UP,
 		"magnet": KEY_SHIFT,
 		"magnet_action": &"magnet_p2",
-		"grapple": KEY_SLASH,
+		"grapple": KEY_ALT,
 		"grapple_action": &"grapple_p2",
 	},
 }
@@ -111,7 +111,7 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if _eliminated:
+	if _eliminated or GameSession.input_locked:
 		return
 
 	_ground_ray.force_raycast_update()
@@ -280,6 +280,28 @@ func set_eliminated() -> void:
 		_magnet_ring.visible = false
 	if _magnet_link:
 		_magnet_link.set_wavy_line(PackedVector2Array(), Color.WHITE, false)
+
+
+func reset_for_round() -> void:
+	_eliminated = false
+	_clear_anchor_highlight()
+	_jump_granted_anchors.clear()
+	_jumps_remaining = max_jumps
+	_magnet_was_pressed = false
+	_grapple_was_pressed = false
+	_impulse_link_target = null
+	_impulse_link_timer = 0.0
+	_grapple_cooldown = 0.0
+	freeze = false
+	sleeping = false
+	collision_layer = 2
+	collision_mask = 3
+	linear_velocity = Vector2.ZERO
+	angular_velocity = 0.0
+	if _visual:
+		_visual.modulate = Color.WHITE
+	if _magnet_ring:
+		_magnet_ring.visible = false
 
 
 func is_eliminated() -> bool:
@@ -586,7 +608,7 @@ func _clamp_horizontal_speed() -> void:
 
 func _update_polarity_label() -> void:
 	if _polarity_label:
-		_polarity_label.text = "N" if polarity > 0 else "S"
+		_polarity_label.text = "P1" if player_id == 1 else "P2"
 
 
 func _apply_player_color() -> void:

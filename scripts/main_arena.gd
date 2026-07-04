@@ -21,7 +21,7 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export_group("Magnet Gameplay")
 @export var magnet_gameplay: MagnetGameplay = MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT
 @export var magnet_affects_players: bool = false
-## 模型2：F/Shift 只打锚点，G/? 专打对手（与 magnet_affects_players 互斥）
+## 模型2：F/Shift 只打锚点，G/Option 专打对手（与 magnet_affects_players 互斥）
 @export var pvp_dual_key_impulse: bool = true
 
 @export_group("Anchor Impulse (one-shot F/Shift)")
@@ -31,7 +31,7 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export var impulse_up_bias: float = 0.48
 @export var impulse_distance_bonus: float = 0.35
 
-@export_group("Player Impulse (dual-key G / ? · weak hook)")
+@export_group("Player Impulse (dual-key G / Option · weak hook)")
 @export var player_impulse_max_range: float = 280.0
 @export var player_impulse_attract_speed: float = 520.0
 @export var player_impulse_up_bias: float = 0.22
@@ -76,8 +76,17 @@ enum Side { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _anchors: Node2D = $Anchors
 @onready var _hazard: Node = $ScrollHazard
 @onready var _finish_line: Node2D = $FinishLine
-@onready var _lava_status: Label = $HUD/LavaStatus
-@onready var _controls_hint: Label = $HUD/ControlsHint
+@onready var _score_p1: Label = $HUD/ScoreP1
+@onready var _score_p2: Label = $HUD/ScoreP2
+@onready var _round_label: Label = $HUD/RoundLabel
+@onready var _countdown_label: Label = $HUD/CountdownLabel
+@onready var _round_banner: Label = $HUD/RoundBanner
+@onready var _lava_visual: ColorRect = $HUD/LavaOverlay
+@onready var _match_result: CanvasLayer = $MatchResult
+@onready var _match_winner: Label = $MatchResult/Panel/MatchWinner
+@onready var _match_score: Label = $MatchResult/Panel/MatchScore
+@onready var _play_again_btn: Button = $MatchResult/Panel/PlayAgainButton
+@onready var _menu_btn: Button = $MatchResult/Panel/MenuButton
 @onready var _arena_camera: Camera2D = $ArenaCamera
 @onready var _player1: SlimePlayer = $Player1
 @onready var _player2: SlimePlayer = $Player2
@@ -85,27 +94,46 @@ enum Side { LEFT = -1, CENTER = 0, RIGHT = 1 }
 var _spawn_player_y: float = START_PLATFORM_Y - PLAYER_STAND_OFFSET
 var _platform_centers: Array[Vector2] = []
 var _platform_scales: Array[float] = []
-var _game_over: bool = false
+var _round_over: bool = false
 
 
 func _ready() -> void:
+	_match_result.visible = false
+	_round_banner.visible = false
+	_play_again_btn.pressed.connect(_on_play_again)
+	_menu_btn.pressed.connect(_on_menu)
+	_arena_camera.scroll_started.connect(_on_scroll_started)
+	_bootstrap_arena()
+	_refresh_score_hud()
+
+
+func _process(_delta: float) -> void:
+	if _round_over or GameSession.input_locked:
+		return
+	_finish_line.check_players(_player1, _player2)
+	_update_countdown_hud()
+
+
+func _bootstrap_arena() -> void:
+	_round_over = false
+	GameSession.set_input_locked(false)
 	_build_staircase()
 	_build_scattered_anchors()
 	_setup_finish_line()
 	_place_players()
-	_arena_camera.setup(_player1, _player2, _spawn_player_y, _finish_line.finish_y)
+	_player1.reset_for_round()
+	_player2.reset_for_round()
+	_finish_line.reset()
+	if _hazard.has_method("reset_for_round"):
+		_hazard.reset_for_round()
 	_hazard.setup(_arena_camera, _player1, _player2)
-	_hazard.player_eliminated.connect(_on_player_eliminated)
-	_finish_line.player_crossed.connect(_on_player_won)
-	_update_hud()
-	_update_controls_hint()
-
-
-func _process(_delta: float) -> void:
-	if _game_over:
-		return
-	_finish_line.check_players(_player1, _player2)
-	_update_hud()
+	if not _hazard.player_eliminated.is_connected(_on_round_lost_by_lava):
+		_hazard.player_eliminated.connect(_on_round_lost_by_lava)
+	_arena_camera.reset_for_round(_player1, _player2, _spawn_player_y, _finish_line.finish_y)
+	if _lava_visual and _lava_visual.has_method("set_scroll_active"):
+		_lava_visual.set_scroll_active(false)
+	if not _finish_line.player_crossed.is_connected(_on_round_won_by_finish):
+		_finish_line.player_crossed.connect(_on_round_won_by_finish)
 
 
 func _build_staircase() -> void:
@@ -455,63 +483,92 @@ func _place_players() -> void:
 	_player2.global_position = Vector2(660.0, _spawn_player_y)
 
 
-func _update_hud() -> void:
-	if _arena_camera == null or _lava_status == null:
-		return
+func _reset_arena_for_next_round() -> void:
+	_bootstrap_arena()
+	_refresh_score_hud()
 
-	var countdown: float = _arena_camera.get_time_until_scroll()
-	if countdown > 0.0:
-		_lava_status.text = "岩浆将在 %.0f 秒后上涌！快往上逃！" % ceil(countdown)
-		_lava_status.modulate = Color(1.0, 0.85, 0.4)
-	elif _arena_camera.is_scrolling():
-		var surface_y: float = _arena_camera.get_lava_surface_world_y()
-		var leader_y := minf(_player1.global_position.y, _player2.global_position.y)
-		var gap := surface_y - leader_y
-		_lava_status.text = "往上逃！领先者距岩浆 %.0f px · 冲过顶部虚线获胜" % maxf(gap, 0.0)
-		_lava_status.modulate = Color(1.0, 0.45, 0.35)
+
+func _refresh_score_hud() -> void:
+	if _score_p1:
+		_score_p1.text = str(GameSession.get_wins(1))
+	if _score_p2:
+		_score_p2.text = str(GameSession.get_wins(2))
+	if _round_label:
+		_round_label.text = GameSession.get_round_label()
+
+
+func _update_countdown_hud() -> void:
+	if _countdown_label == null or _arena_camera == null:
+		return
+	var remaining := _arena_camera.get_countdown_display()
+	if remaining > 0 and not _arena_camera.is_scrolling():
+		_countdown_label.text = str(remaining)
+		_countdown_label.visible = true
 	else:
-		_lava_status.text = ""
+		_countdown_label.visible = false
 
 
-func _update_controls_hint() -> void:
-	if _controls_hint == null:
+func _on_scroll_started() -> void:
+	if _lava_visual and _lava_visual.has_method("set_scroll_active"):
+		_lava_visual.set_scroll_active(true)
+
+
+func _on_round_lost_by_lava(_fallen_id: int, winner_id: int) -> void:
+	_end_round(winner_id)
+
+
+func _on_round_won_by_finish(winner_id: int, _winner_name: String) -> void:
+	_end_round(winner_id)
+
+
+func _end_round(winner_id: int) -> void:
+	if _round_over:
 		return
-	var lines: PackedStringArray = []
-	if anchor_only_climb_test:
-		lines.append("【测试：仅出生台 + 双路保底锚点链】")
-	if magnet_gameplay == MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT:
-		lines.append("【冲量】F/Shift → 锚点（强）· 异极飞过 / 同极弹开")
-		if pvp_dual_key_impulse:
-			lines.append("【对抗】G / ? → 吸向对手（弱钩，有冷却）")
-		elif magnet_affects_players:
-			lines.append("F/Shift 对玩家与锚点均生效")
-		else:
-			lines.append("玩家之间无磁力，仍有碰撞")
-	else:
-		lines.append("按住 F/Shift 持续磁力")
-	lines.append("P1 (蓝 N): A/D | W 跳 | F 锚 | G 钩人")
-	lines.append("P2 (红 S): ←/→ | ↑ 跳 | Shift 锚 | ? 钩人")
-	lines.append("5 秒后场景上滚 · 冲过顶部虚线获胜")
-	_controls_hint.text = "\n".join(lines)
+	_round_over = true
+	GameSession.set_input_locked(true)
 
-
-func _on_player_eliminated(_fallen_id: int, _winner_name: String) -> void:
-	_game_over = true
-
-
-func _on_player_won(winner_id: int, winner_name: String) -> void:
-	if _game_over:
-		return
-	_game_over = true
-	print("%s 冲过终点线！" % winner_name)
-	_lava_status.text = "%s 获胜！" % winner_name
-	_lava_status.modulate = Color(0.5, 1.0, 0.55)
-	if _player1.has_method("set_eliminated") and winner_id != 1:
+	if winner_id != 1 and _player1.has_method("set_eliminated"):
 		_player1.set_eliminated()
-	if _player2.has_method("set_eliminated") and winner_id != 2:
+	if winner_id != 2 and _player2.has_method("set_eliminated"):
 		_player2.set_eliminated()
-	await get_tree().create_timer(1.5).timeout
-	get_tree().reload_current_scene()
+
+	var match_over := GameSession.record_round_win(winner_id)
+	_refresh_score_hud()
+	await _show_round_banner(winner_id)
+
+	if match_over:
+		_show_match_result()
+	else:
+		_reset_arena_for_next_round()
+
+
+func _show_round_banner(winner_id: int) -> void:
+	if _round_banner == null:
+		await get_tree().create_timer(1.2).timeout
+		return
+	_round_banner.text = "%s WINS" % GameSession.player_tag(winner_id)
+	_round_banner.visible = true
+	await get_tree().create_timer(1.2).timeout
+	_round_banner.visible = false
+
+
+func _show_match_result() -> void:
+	var winner_id := GameSession.get_match_winner_id()
+	if _match_winner:
+		_match_winner.text = "%s WINS" % GameSession.player_tag(winner_id)
+	if _match_score:
+		_match_score.text = GameSession.get_score_label()
+	_match_result.visible = true
+
+
+func _on_play_again() -> void:
+	_match_result.visible = false
+	GameSession.start_new_match()
+	_reset_arena_for_next_round()
+
+
+func _on_menu() -> void:
+	get_tree().change_scene_to_file("res://scenes/title_screen.tscn")
 
 
 func get_spawn_player_y() -> float:
