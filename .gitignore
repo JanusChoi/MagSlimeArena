@@ -2,7 +2,8 @@
 .godot/
 .import/
 export.cfg
-export_presets.cfg
+# export_presets.cfg 已纳入版本库，便于本地/CI 复现 Web 导出
+# web/ 为方案 A 预构建产物，需提交以供 Vercel 部署
 
 # Imported translations (automatically generated from CSV files)
 *.translation
