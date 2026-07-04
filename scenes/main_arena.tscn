@@ -1,0 +1,101 @@
+[gd_scene format=3 uid="uid://cmainarena001"]
+
+[ext_resource type="Script" uid="uid://dl4m2hu8debne" path="res://scripts/main_arena.gd" id="1_main"]
+[ext_resource type="PackedScene" uid="uid://b0ytyqmrqbpum" path="res://scenes/slime_player.tscn" id="2_slime"]
+[ext_resource type="Script" uid="uid://bdmm300pg6xtu" path="res://scripts/lava.gd" id="3_lava"]
+[ext_resource type="Script" uid="uid://bdvnt505v3dq0" path="res://scripts/arena_camera.gd" id="4_camera"]
+[ext_resource type="Script" uid="uid://cl0xnp6mw5ch6" path="res://scripts/finish_line.gd" id="5_finish"]
+[ext_resource type="Texture2D" uid="uid://2yvlfrjue2m6" path="res://assets/backgrounds/silo_shaft.png" id="6_bg"]
+[ext_resource type="Script" uid="uid://fl00tscb3h8j" path="res://scripts/arena_background.gd" id="7_bg_script"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_wall_v"]
+size = Vector2(120, 3100)
+
+[node name="MainArena" type="Node2D" unique_id=1743823015]
+script = ExtResource("1_main")
+
+[node name="Background" type="Node2D" parent="." unique_id=597998657]
+z_index = -10
+script = ExtResource("7_bg_script")
+texture = ExtResource("6_bg")
+
+[node name="LeftWall" type="StaticBody2D" parent="." unique_id=1974738245]
+position = Vector2(60, 1550)
+collision_mask = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="LeftWall" unique_id=363685038]
+shape = SubResource("RectangleShape2D_wall_v")
+
+[node name="RightWall" type="StaticBody2D" parent="." unique_id=143872739]
+position = Vector2(1020, 1550)
+collision_mask = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="RightWall" unique_id=1368272728]
+shape = SubResource("RectangleShape2D_wall_v")
+
+[node name="Platforms" type="Node2D" parent="." unique_id=1067074325]
+
+[node name="Anchors" type="Node2D" parent="." unique_id=1210755569]
+
+[node name="FinishLine" type="Node2D" parent="." unique_id=301663410]
+z_index = 5
+script = ExtResource("5_finish")
+
+[node name="Player1" parent="." unique_id=820038080 instance=ExtResource("2_slime")]
+position = Vector2(440, 2432)
+
+[node name="Player2" parent="." unique_id=500581127 instance=ExtResource("2_slime")]
+position = Vector2(640, 2432)
+player_id = 2
+
+[node name="ScrollHazard" type="Node" parent="." unique_id=999577984]
+script = ExtResource("3_lava")
+
+[node name="ArenaCamera" type="Camera2D" parent="." unique_id=469252811]
+position = Vector2(540, 2042)
+script = ExtResource("4_camera")
+follow_smoothing = 5.0
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=855111315]
+
+[node name="LavaOverlay" type="ColorRect" parent="HUD" unique_id=1572174405]
+anchors_preset = -1
+anchor_top = 0.75
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+color = Color(0.95, 0.35, 0.08, 0.78)
+
+[node name="LavaGlow" type="ColorRect" parent="HUD/LavaOverlay" unique_id=1703610823]
+layout_mode = 0
+anchor_right = 1.0
+offset_top = -28.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(1, 0.55, 0.15, 0.35)
+
+[node name="LavaStatus" type="Label" parent="HUD" unique_id=275274385]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -520.0
+offset_top = 180.0
+offset_right = 520.0
+offset_bottom = 260.0
+theme_override_font_sizes/font_size = 24
+text = "岩浆将在 5 秒后上涌！快往上逃！"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="ControlsHint" type="Label" parent="HUD" unique_id=1731539000]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 1056.0
+offset_bottom = 160.0
+theme_override_font_sizes/font_size = 18
+text = "P1 (N-Pole 蓝): A/D | W 跳 | 按住 F 磁力
+P2 (S-Pole 红): ←/→ | ↑ 跳 | 按住 Shift 磁力
+5 秒后场景上滚、底部岩浆紧追！冲过顶部虚线获胜！"
+autowrap_mode = 2
