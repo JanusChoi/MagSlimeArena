@@ -10,6 +10,7 @@
   - **同极**：从锚点弹开
 - **玩家之间无磁力**，RigidBody 碰撞保留
 - 配合 `anchor_only_climb_test` 可测纯锚点攀爬
+- **左 S 链（蓝 N）/ 右 N 链（红 S）**：各有一条保底可通关路线，锚点间距按冲量射程校验
 
 ## Inspector（MainArena 节点）
 

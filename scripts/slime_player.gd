@@ -176,18 +176,31 @@ func _trigger_anchor_impulse() -> void:
 
 
 func _find_closest_anchor_in_range(max_range: float) -> Node2D:
-	var best: Node2D = null
-	var best_dist := INF
+	var best_opposite: Node2D = null
+	var best_opposite_dist := INF
+	var best_same: Node2D = null
+	var best_same_dist := INF
+
 	for node in get_tree().get_nodes_in_group("magnetic_anchors"):
 		if not node is Node2D:
 			continue
 		var anchor := node as Node2D
 		var dist := global_position.distance_to(anchor.global_position)
-		if dist > max_range or dist >= best_dist:
+		if dist > max_range:
 			continue
-		best_dist = dist
-		best = anchor
-	return best
+		var interaction: int = polarity * _MagneticUtilsScript.get_polarity(anchor)
+		if interaction < 0:
+			if dist < best_opposite_dist:
+				best_opposite_dist = dist
+				best_opposite = anchor
+		elif dist < best_same_dist:
+			best_same_dist = dist
+			best_same = anchor
+
+	# 优先异极（可飞过）；范围内只有同极时才斥开
+	if best_opposite != null:
+		return best_opposite
+	return best_same
 
 
 func set_eliminated() -> void:

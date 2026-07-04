@@ -31,6 +31,9 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 
 const ANCHOR_ONLY_COUNT := 14
 const ANCHOR_ONLY_VERT_STEP := 118.0
+const ROUTE_REACH_SAFETY := 0.86
+const P1_ROUTE_LANE_X := LEFT_LANE_X
+const P2_ROUTE_LANE_X := RIGHT_LANE_X
 
 const PLATFORM_SCENE := preload("res://scenes/platform.tscn")
 const ANCHOR_SCENE := preload("res://scenes/magnetic_anchor.tscn")
@@ -337,7 +340,7 @@ func _build_scattered_anchors() -> void:
 		child.queue_free()
 
 	if anchor_only_climb_test:
-		_build_anchor_only_chain()
+		_build_guaranteed_player_routes()
 		return
 
 	if _platform_centers.size() < 4:
@@ -379,24 +382,48 @@ func _balanced_polarities(count: int) -> Array[bool]:
 	return flags
 
 
-func _build_anchor_only_chain() -> void:
+func _build_guaranteed_player_routes() -> void:
 	if _platform_centers.is_empty():
 		return
 
 	var base_y := _platform_centers[0].y
-	var polarities := _balanced_polarities(ANCHOR_ONLY_COUNT)
+	var max_reach := impulse_max_range * ROUTE_REACH_SAFETY
+	var prev_p1 := Vector2(P1_SPAWN_X, _spawn_player_y)
+	var prev_p2 := Vector2(P2_SPAWN_X, _spawn_player_y)
 
 	for i in ANCHOR_ONLY_COUNT:
 		var y := base_y - float(i + 1) * ANCHOR_ONLY_VERT_STEP
-		var x := LEFT_LANE_X if i % 2 == 0 else RIGHT_LANE_X
-		x += randf_range(-LANE_JITTER, LANE_JITTER)
-		x = clampf(x, 220.0, 860.0)
+		var p1_x := P1_ROUTE_LANE_X + (72.0 if i % 2 == 0 else -36.0)
+		var p2_x := P2_ROUTE_LANE_X + (72.0 if i % 2 == 1 else -36.0)
+		# 两路锚点略错开高度，避免空中误选到对方路线的同极锚点
+		var pos_p1 := Vector2(clampf(p1_x, 240.0, 470.0), y)
+		var pos_p2 := Vector2(clampf(p2_x, 610.0, 840.0), y - ANCHOR_ONLY_VERT_STEP * 0.14)
 
-		var anchor: Node2D = ANCHOR_SCENE.instantiate()
-		anchor.position = Vector2(x, y)
-		anchor.set("wall_side", 0)
-		anchor.set("is_north_pole", polarities[i])
-		_anchors.add_child(anchor)
+		pos_p1 = _clamp_anchor_to_reach(prev_p1, pos_p1, max_reach)
+		pos_p2 = _clamp_anchor_to_reach(prev_p2, pos_p2, max_reach)
+
+		# 蓝 N 走 S 链，红 S 走 N 链（异极吸引）
+		_place_route_anchor(pos_p1, false)
+		_place_route_anchor(pos_p2, true)
+
+		prev_p1 = pos_p1
+		prev_p2 = pos_p2
+
+
+func _clamp_anchor_to_reach(from: Vector2, target: Vector2, max_reach: float) -> Vector2:
+	var offset := target - from
+	var dist := offset.length()
+	if dist <= max_reach or dist < 0.001:
+		return target
+	return from + offset * (max_reach * 0.95 / dist)
+
+
+func _place_route_anchor(pos: Vector2, is_north: bool) -> void:
+	var anchor: Node2D = ANCHOR_SCENE.instantiate()
+	anchor.position = pos
+	anchor.set("wall_side", 0)
+	anchor.set("is_north_pole", is_north)
+	_anchors.add_child(anchor)
 
 
 func _place_players() -> void:
@@ -428,7 +455,7 @@ func _update_controls_hint() -> void:
 		return
 	var lines: PackedStringArray = []
 	if anchor_only_climb_test:
-		lines.append("【测试：仅出生台 + 锚点链】")
+		lines.append("【测试：仅出生台 + 双路保底锚点链】")
 	if magnet_gameplay == MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT:
 		lines.append("【冲量磁力】按一次 F/Shift → 最近锚点发射（异极飞过 · 同极弹开）")
 		lines.append("玩家之间无磁力，仍有碰撞")
