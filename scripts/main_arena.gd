@@ -1,5 +1,11 @@
 extends Node2D
+class_name MainArena
 ## 主竞技场：左右交替平台、终点线、屏幕固定岩浆 + 世界上滚。
+
+enum MagnetGameplay {
+	CLASSIC_HOLD,
+	ANCHOR_IMPULSE_ONE_SHOT,
+}
 
 const ARENA_HEIGHT := 3100.0
 const ARENA_WIDTH := 1080.0
@@ -11,6 +17,18 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 
 ## 极端测试：仅出生台 + 垂直锚点链（Inspector 可关）
 @export var anchor_only_climb_test: bool = true
+
+@export_group("Magnet Gameplay")
+@export var magnet_gameplay: MagnetGameplay = MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT
+@export var magnet_affects_players: bool = false
+
+@export_group("Anchor Impulse (one-shot F/Shift)")
+@export var impulse_max_range: float = 520.0
+@export var impulse_attract_speed: float = 960.0
+@export var impulse_repel_speed: float = 840.0
+@export var impulse_up_bias: float = 0.48
+@export var impulse_distance_bonus: float = 0.35
+
 const ANCHOR_ONLY_COUNT := 14
 const ANCHOR_ONLY_VERT_STEP := 118.0
 
@@ -406,14 +424,20 @@ func _update_hud() -> void:
 
 
 func _update_controls_hint() -> void:
-	if _controls_hint:
-		var mode_line := "【测试模式：仅出生台 + 锚点链】\n" if anchor_only_climb_test else ""
-		_controls_hint.text = (
-			mode_line
-			+ "P1 (蓝 N): A/D | W 跳 | 按住 F 磁力\n"
-			+ "P2 (红 S): ←/→ | ↑ 跳 | 按住 Shift 磁力\n"
-			+ "异极锚点进入范围可续 1 跳 · 5 秒后场景上滚！"
-		)
+	if _controls_hint == null:
+		return
+	var lines: PackedStringArray = []
+	if anchor_only_climb_test:
+		lines.append("【测试：仅出生台 + 锚点链】")
+	if magnet_gameplay == MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT:
+		lines.append("【冲量磁力】按一次 F/Shift → 最近锚点发射（异极飞过 · 同极弹开）")
+		lines.append("玩家之间无磁力，仍有碰撞")
+	else:
+		lines.append("按住 F/Shift 持续磁力")
+	lines.append("P1 (蓝 N): A/D | W 跳 | F")
+	lines.append("P2 (红 S): ←/→ | ↑ 跳 | Shift")
+	lines.append("5 秒后场景上滚 · 冲过顶部虚线获胜")
+	_controls_hint.text = "\n".join(lines)
 
 
 func _on_player_eliminated(_fallen_id: int, _winner_name: String) -> void:

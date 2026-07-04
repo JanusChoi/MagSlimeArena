@@ -1,6 +1,6 @@
 class_name SlimePlayer
 extends RigidBody2D
-## 史莱姆玩家：平台跳跃 + 散布锚点续跳 + 磁力对战。
+## 史莱姆玩家：平台跳跃 + 锚点交互 + 磁力（持续 / 单次冲量两种模式）。
 
 @export var player_id: int = 1
 @export var move_force: float = 1200.0
@@ -12,7 +12,7 @@ extends RigidBody2D
 @export var prefer_player_targets: bool = true
 @export var debug_jump: bool = false
 
-@export_group("Anchor Jump")
+@export_group("Anchor Jump (classic mode)")
 @export var anchor_entry_radius: float = 58.0
 @export var anchor_highlight_sec: float = 0.35
 
@@ -43,6 +43,8 @@ const _MagneticUtilsScript := preload("res://scripts/magnetic_utils.gd")
 
 var polarity: int = 1
 var _magnet_active: bool = false
+var _magnet_was_pressed: bool = false
+var _magnet_just_pressed: bool = false
 var _magnet_link_phase: float = 0.0
 var _jumps_remaining: int = 0
 var _jump_was_pressed: bool = false
@@ -52,6 +54,9 @@ var _jump_granted_anchors: Dictionary = {}
 var _highlight_anchor: Node2D = null
 var _highlight_timer: float = 0.0
 var _just_granted_anchor_jump: bool = false
+var _impulse_link_target: Node2D = null
+var _impulse_link_timer: float = 0.0
+var _magnet_flash_timer: float = 0.0
 
 const _INPUT_KEYS := {
 	1: {
@@ -88,6 +93,10 @@ func _process(delta: float) -> void:
 	_update_squash_stretch(delta)
 	_update_magnet_link(delta)
 	_update_anchor_highlight(delta)
+	if _impulse_link_timer > 0.0:
+		_impulse_link_timer -= delta
+	if _magnet_flash_timer > 0.0:
+		_magnet_flash_timer -= delta
 
 
 func _physics_process(_delta: float) -> void:
@@ -98,19 +107,87 @@ func _physics_process(_delta: float) -> void:
 	_update_magnet_state()
 
 	var grounded := _is_grounded()
-	if grounded:
-		_jump_granted_anchors.clear()
-	else:
-		_check_anchor_jump_entry()
 
-	if _magnet_active:
-		_apply_magnetism()
+	if _uses_impulse_mode():
+		if _magnet_just_pressed:
+			_trigger_anchor_impulse()
+	else:
+		if grounded:
+			_jump_granted_anchors.clear()
+		else:
+			_check_anchor_jump_entry()
+		if _magnet_active:
+			_apply_magnetism()
 
 	_handle_movement()
 	_handle_jump(grounded)
 	_clamp_horizontal_speed()
 	_update_magnet_visual()
 	_flush_pending_jump()
+
+
+func _arena() -> MainArena:
+	return get_parent() as MainArena
+
+
+func _uses_impulse_mode() -> bool:
+	var arena := _arena()
+	return arena != null and arena.magnet_gameplay == MainArena.MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT
+
+
+func _magnet_targets_players() -> bool:
+	var arena := _arena()
+	if arena == null:
+		return prefer_player_targets
+	return arena.magnet_affects_players
+
+
+func _trigger_anchor_impulse() -> void:
+	var arena := _arena()
+	if arena == null:
+		return
+
+	var anchor := _find_closest_anchor_in_range(arena.impulse_max_range)
+	if anchor == null:
+		return
+
+	var to_anchor := anchor.global_position - global_position
+	var dist := to_anchor.length()
+	if dist < 0.001:
+		return
+
+	var dir := to_anchor / dist
+	var interaction: int = polarity * _MagneticUtilsScript.get_polarity(anchor)
+	sleeping = false
+
+	if interaction < 0:
+		var fly_dir := (dir + Vector2(0.0, -arena.impulse_up_bias)).normalized()
+		var speed := arena.impulse_attract_speed + dist * arena.impulse_distance_bonus
+		linear_velocity = fly_dir * speed
+	else:
+		var speed := arena.impulse_repel_speed + dist * arena.impulse_distance_bonus * 0.6
+		linear_velocity = -dir * speed
+
+	_flash_anchor(anchor)
+	_impulse_link_target = anchor
+	_impulse_link_timer = 0.45
+	_magnet_flash_timer = 0.3
+	_just_granted_anchor_jump = true
+
+
+func _find_closest_anchor_in_range(max_range: float) -> Node2D:
+	var best: Node2D = null
+	var best_dist := INF
+	for node in get_tree().get_nodes_in_group("magnetic_anchors"):
+		if not node is Node2D:
+			continue
+		var anchor := node as Node2D
+		var dist := global_position.distance_to(anchor.global_position)
+		if dist > max_range or dist >= best_dist:
+			continue
+		best_dist = dist
+		best = anchor
+	return best
 
 
 func set_eliminated() -> void:
@@ -204,10 +281,13 @@ func _get_keys() -> Dictionary:
 func _update_magnet_state() -> void:
 	var keys := _get_keys()
 	var action: StringName = keys["magnet_action"]
-	_magnet_active = (
+	var pressed := (
 		Input.is_action_pressed(action)
 		or Input.is_physical_key_pressed(keys["magnet"])
 	)
+	_magnet_just_pressed = pressed and not _magnet_was_pressed
+	_magnet_active = pressed
+	_magnet_was_pressed = pressed
 
 
 func _handle_movement() -> void:
@@ -267,23 +347,34 @@ func _get_body_radius() -> float:
 
 
 func _find_closest_magnetic_target() -> Node2D:
+	if _uses_impulse_mode():
+		if _impulse_link_target != null and is_instance_valid(_impulse_link_target) and _impulse_link_timer > 0.0:
+			return _impulse_link_target
+		return _find_closest_anchor_in_range(_arena().impulse_max_range if _arena() else 520.0)
+
 	var closest: Node2D = null
 	var closest_dist_sq := INF
 	var closest_player: Node2D = null
 	var closest_player_dist_sq := INF
+	var allow_players := _magnet_targets_players()
 
 	for node in get_tree().get_nodes_in_group("magnetic_entities"):
 		if node == self or not node is Node2D:
+			continue
+		if node.is_in_group("magnetic_anchors"):
+			pass
+		elif node.is_in_group("players") and not allow_players:
 			continue
 		var dist_sq := global_position.distance_squared_to(node.global_position)
 		if dist_sq < closest_dist_sq:
 			closest_dist_sq = dist_sq
 			closest = node
-		if prefer_player_targets and node.is_in_group("players") and dist_sq < closest_player_dist_sq:
-			closest_player_dist_sq = dist_sq
-			closest_player = node
+		if allow_players and prefer_player_targets and node.is_in_group("players"):
+			if dist_sq < closest_player_dist_sq:
+				closest_player_dist_sq = dist_sq
+				closest_player = node
 
-	if prefer_player_targets and closest_player != null:
+	if allow_players and prefer_player_targets and closest_player != null:
 		if closest == null or closest_player_dist_sq <= closest_dist_sq * 1.35:
 			return closest_player
 
@@ -316,7 +407,13 @@ func _update_magnet_link(delta: float) -> void:
 	if not _magnet_link.has_method("set_wavy_line"):
 		return
 
-	if not _is_magnet_pressed():
+	var show_link := false
+	if _uses_impulse_mode():
+		show_link = _impulse_link_timer > 0.0 and _impulse_link_target != null
+	else:
+		show_link = _is_magnet_pressed()
+
+	if not show_link:
 		_magnet_link.set_wavy_line(PackedVector2Array(), Color.WHITE, false)
 		return
 
@@ -334,14 +431,12 @@ func _update_magnet_link(delta: float) -> void:
 		_magnet_link_phase,
 	)
 	var link_color := _get_magnet_link_color_for_target(target)
-	_magnet_link.line_width = magnet_link_width
+	_magnet_link.line_width = magnet_link_width + (2.0 if _uses_impulse_mode() else 0.0)
 	_magnet_link.set_wavy_line(local_points, link_color, true)
 
 
 func _is_magnet_pressed() -> bool:
-	var keys := _get_keys()
-	var action: StringName = keys["magnet_action"]
-	return Input.is_action_pressed(action) or Input.is_physical_key_pressed(keys["magnet"])
+	return _magnet_active
 
 
 func _build_wavy_line(
@@ -380,8 +475,11 @@ func _get_magnet_link_color_for_target(target: Node2D) -> Color:
 
 
 func _clamp_horizontal_speed() -> void:
+	var cap := max_horizontal_speed
+	if _uses_impulse_mode():
+		cap = maxf(max_horizontal_speed, 920.0)
 	var velocity := linear_velocity
-	velocity.x = clampf(velocity.x, -max_horizontal_speed, max_horizontal_speed)
+	velocity.x = clampf(velocity.x, -cap, cap)
 	linear_velocity = velocity
 
 
@@ -399,12 +497,15 @@ func _apply_player_color() -> void:
 
 func _update_magnet_visual() -> void:
 	if _magnet_ring:
-		_magnet_ring.visible = _magnet_active
+		if _uses_impulse_mode():
+			_magnet_ring.visible = _magnet_flash_timer > 0.0
+		else:
+			_magnet_ring.visible = _magnet_active
 
 	if _visual and not _eliminated:
-		if _just_granted_anchor_jump:
+		if _just_granted_anchor_jump or _magnet_flash_timer > 0.0:
 			_visual.modulate = Color(1.15, 1.45, 1.2)
-		elif _magnet_active:
+		elif _magnet_active and not _uses_impulse_mode():
 			_visual.modulate = Color(1.35, 1.35, 1.5)
 		else:
 			_visual.modulate = Color.WHITE
