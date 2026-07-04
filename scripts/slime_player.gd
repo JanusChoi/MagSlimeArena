@@ -45,6 +45,10 @@ var polarity: int = 1
 var _magnet_active: bool = false
 var _magnet_was_pressed: bool = false
 var _magnet_just_pressed: bool = false
+var _grapple_active: bool = false
+var _grapple_was_pressed: bool = false
+var _grapple_just_pressed: bool = false
+var _grapple_cooldown: float = 0.0
 var _magnet_link_phase: float = 0.0
 var _jumps_remaining: int = 0
 var _jump_was_pressed: bool = false
@@ -56,6 +60,7 @@ var _highlight_timer: float = 0.0
 var _just_granted_anchor_jump: bool = false
 var _impulse_link_target: Node2D = null
 var _impulse_link_timer: float = 0.0
+var _impulse_link_to_player: bool = false
 var _magnet_flash_timer: float = 0.0
 
 const _INPUT_KEYS := {
@@ -65,6 +70,8 @@ const _INPUT_KEYS := {
 		"jump": KEY_W,
 		"magnet": KEY_F,
 		"magnet_action": &"magnet_p1",
+		"grapple": KEY_G,
+		"grapple_action": &"grapple_p1",
 	},
 	2: {
 		"left": KEY_LEFT,
@@ -72,6 +79,8 @@ const _INPUT_KEYS := {
 		"jump": KEY_UP,
 		"magnet": KEY_SHIFT,
 		"magnet_action": &"magnet_p2",
+		"grapple": KEY_SLASH,
+		"grapple_action": &"grapple_p2",
 	},
 }
 
@@ -97,6 +106,8 @@ func _process(delta: float) -> void:
 		_impulse_link_timer -= delta
 	if _magnet_flash_timer > 0.0:
 		_magnet_flash_timer -= delta
+	if _grapple_cooldown > 0.0:
+		_grapple_cooldown -= delta
 
 
 func _physics_process(_delta: float) -> void:
@@ -105,12 +116,15 @@ func _physics_process(_delta: float) -> void:
 
 	_ground_ray.force_raycast_update()
 	_update_magnet_state()
+	_update_grapple_state()
 
 	var grounded := _is_grounded()
 
 	if _uses_impulse_mode():
 		if _magnet_just_pressed:
 			_trigger_anchor_impulse()
+		if _uses_dual_key_pvp() and _grapple_just_pressed:
+			_trigger_player_impulse()
 	else:
 		if grounded:
 			_jump_granted_anchors.clear()
@@ -135,10 +149,21 @@ func _uses_impulse_mode() -> bool:
 	return arena != null and arena.magnet_gameplay == MainArena.MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT
 
 
+func _uses_dual_key_pvp() -> bool:
+	var arena := _arena()
+	return (
+		arena != null
+		and _uses_impulse_mode()
+		and arena.pvp_dual_key_impulse
+	)
+
+
 func _magnet_targets_players() -> bool:
 	var arena := _arena()
 	if arena == null:
 		return prefer_player_targets
+	if _uses_dual_key_pvp():
+		return false
 	return arena.magnet_affects_players
 
 
@@ -170,9 +195,52 @@ func _trigger_anchor_impulse() -> void:
 
 	_flash_anchor(anchor)
 	_impulse_link_target = anchor
+	_impulse_link_to_player = false
 	_impulse_link_timer = 0.45
 	_magnet_flash_timer = 0.3
 	_just_granted_anchor_jump = true
+
+
+func _trigger_player_impulse() -> void:
+	var arena := _arena()
+	if arena == null or _grapple_cooldown > 0.0:
+		return
+
+	var opponent := _find_opponent_in_range(arena.player_impulse_max_range)
+	if opponent == null:
+		return
+
+	var to_target := opponent.global_position - global_position
+	var dist := to_target.length()
+	if dist < 0.001:
+		return
+
+	var dir := to_target / dist
+	sleeping = false
+	var fly_dir := (dir + Vector2(0.0, -arena.player_impulse_up_bias)).normalized()
+	var speed := arena.player_impulse_attract_speed + dist * arena.player_impulse_distance_bonus
+	linear_velocity = fly_dir * speed
+
+	_impulse_link_target = opponent
+	_impulse_link_to_player = true
+	_impulse_link_timer = 0.35
+	_magnet_flash_timer = 0.25
+	_grapple_cooldown = arena.player_impulse_cooldown
+
+
+func _find_opponent_in_range(max_range: float) -> Node2D:
+	var best: Node2D = null
+	var best_dist := INF
+	for node in get_tree().get_nodes_in_group("players"):
+		if node == self or not node is Node2D:
+			continue
+		if node.has_method("is_eliminated") and node.is_eliminated():
+			continue
+		var dist := global_position.distance_to(node.global_position)
+		if dist <= max_range and dist < best_dist:
+			best_dist = dist
+			best = node
+	return best
 
 
 func _find_closest_anchor_in_range(max_range: float) -> Node2D:
@@ -301,6 +369,24 @@ func _update_magnet_state() -> void:
 	_magnet_just_pressed = pressed and not _magnet_was_pressed
 	_magnet_active = pressed
 	_magnet_was_pressed = pressed
+
+
+func _update_grapple_state() -> void:
+	if not _uses_dual_key_pvp():
+		_grapple_active = false
+		_grapple_just_pressed = false
+		_grapple_was_pressed = false
+		return
+
+	var keys := _get_keys()
+	var action: StringName = keys["grapple_action"]
+	var pressed := (
+		Input.is_action_pressed(action)
+		or Input.is_physical_key_pressed(keys["grapple"])
+	)
+	_grapple_just_pressed = pressed and not _grapple_was_pressed
+	_grapple_active = pressed
+	_grapple_was_pressed = pressed
 
 
 func _handle_movement() -> void:
@@ -444,6 +530,8 @@ func _update_magnet_link(delta: float) -> void:
 		_magnet_link_phase,
 	)
 	var link_color := _get_magnet_link_color_for_target(target)
+	if _impulse_link_to_player:
+		link_color = Color(1.0, 0.72, 0.28, 0.95)
 	_magnet_link.line_width = magnet_link_width + (2.0 if _uses_impulse_mode() else 0.0)
 	_magnet_link.set_wavy_line(local_points, link_color, true)
 
@@ -512,12 +600,21 @@ func _update_magnet_visual() -> void:
 	if _magnet_ring:
 		if _uses_impulse_mode():
 			_magnet_ring.visible = _magnet_flash_timer > 0.0
+			if _impulse_link_to_player and _magnet_flash_timer > 0.0:
+				_magnet_ring.color = Color(1.0, 0.75, 0.35, 0.55) if player_id == 1 else Color(1.0, 0.65, 0.4, 0.55)
+			else:
+				_apply_player_color()
 		else:
 			_magnet_ring.visible = _magnet_active
 
 	if _visual and not _eliminated:
 		if _just_granted_anchor_jump or _magnet_flash_timer > 0.0:
-			_visual.modulate = Color(1.15, 1.45, 1.2)
+			if _impulse_link_to_player and _magnet_flash_timer > 0.0:
+				_visual.modulate = Color(1.35, 1.15, 0.85)
+			else:
+				_visual.modulate = Color(1.15, 1.45, 1.2)
+		elif _grapple_active and _uses_dual_key_pvp():
+			_visual.modulate = Color(1.25, 1.2, 1.0)
 		elif _magnet_active and not _uses_impulse_mode():
 			_visual.modulate = Color(1.35, 1.35, 1.5)
 		else:

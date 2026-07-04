@@ -21,6 +21,8 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export_group("Magnet Gameplay")
 @export var magnet_gameplay: MagnetGameplay = MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT
 @export var magnet_affects_players: bool = false
+## 模型2：F/Shift 只打锚点，G/? 专打对手（与 magnet_affects_players 互斥）
+@export var pvp_dual_key_impulse: bool = true
 
 @export_group("Anchor Impulse (one-shot F/Shift)")
 @export var impulse_max_range: float = 520.0
@@ -28,6 +30,13 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export var impulse_repel_speed: float = 840.0
 @export var impulse_up_bias: float = 0.48
 @export var impulse_distance_bonus: float = 0.35
+
+@export_group("Player Impulse (dual-key G / ? · weak hook)")
+@export var player_impulse_max_range: float = 280.0
+@export var player_impulse_attract_speed: float = 520.0
+@export var player_impulse_up_bias: float = 0.22
+@export var player_impulse_distance_bonus: float = 0.15
+@export var player_impulse_cooldown: float = 0.45
 
 const ANCHOR_ONLY_COUNT := 14
 const ANCHOR_ONLY_VERT_STEP := 118.0
@@ -457,12 +466,17 @@ func _update_controls_hint() -> void:
 	if anchor_only_climb_test:
 		lines.append("【测试：仅出生台 + 双路保底锚点链】")
 	if magnet_gameplay == MagnetGameplay.ANCHOR_IMPULSE_ONE_SHOT:
-		lines.append("【冲量磁力】按一次 F/Shift → 最近锚点发射（异极飞过 · 同极弹开）")
-		lines.append("玩家之间无磁力，仍有碰撞")
+		lines.append("【冲量】F/Shift → 锚点（强）· 异极飞过 / 同极弹开")
+		if pvp_dual_key_impulse:
+			lines.append("【对抗】G / ? → 吸向对手（弱钩，有冷却）")
+		elif magnet_affects_players:
+			lines.append("F/Shift 对玩家与锚点均生效")
+		else:
+			lines.append("玩家之间无磁力，仍有碰撞")
 	else:
 		lines.append("按住 F/Shift 持续磁力")
-	lines.append("P1 (蓝 N): A/D | W 跳 | F")
-	lines.append("P2 (红 S): ←/→ | ↑ 跳 | Shift")
+	lines.append("P1 (蓝 N): A/D | W 跳 | F 锚 | G 钩人")
+	lines.append("P2 (红 S): ←/→ | ↑ 跳 | Shift 锚 | ? 钩人")
 	lines.append("5 秒后场景上滚 · 冲过顶部虚线获胜")
 	_controls_hint.text = "\n".join(lines)
 
