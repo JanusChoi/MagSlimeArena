@@ -26,7 +26,7 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 
 @export_group("Anchor Impulse (one-shot F/Shift)")
 @export var impulse_max_range: float = 520.0
-@export var impulse_attract_speed: float = 960.0
+@export var impulse_attract_speed: float = 1960.0
 @export var impulse_repel_speed: float = 840.0
 @export var impulse_up_bias: float = 0.48
 @export var impulse_distance_bonus: float = 0.35
@@ -38,8 +38,11 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export var player_impulse_distance_bonus: float = 0.15
 @export var player_impulse_cooldown: float = 0.45
 
-const ANCHOR_ONLY_COUNT := 14
-const ANCHOR_ONLY_VERT_STEP := 118.0
+@export_group("Guaranteed Routes")
+@export var route_vert_step: float = 360.0
+@export var route_horiz_zigzag: float = 110.0
+@export var route_top_y: float = 720.0
+
 const ROUTE_REACH_SAFETY := 0.86
 const P1_ROUTE_LANE_X := LEFT_LANE_X
 const P2_ROUTE_LANE_X := RIGHT_LANE_X
@@ -396,27 +399,38 @@ func _build_guaranteed_player_routes() -> void:
 		return
 
 	var base_y := _platform_centers[0].y
+	var vert_step := _effective_route_vert_step()
+	var anchor_count := _route_anchor_count(base_y, vert_step)
 	var max_reach := impulse_max_range * ROUTE_REACH_SAFETY
 	var prev_p1 := Vector2(P1_SPAWN_X, _spawn_player_y)
 	var prev_p2 := Vector2(P2_SPAWN_X, _spawn_player_y)
 
-	for i in ANCHOR_ONLY_COUNT:
-		var y := base_y - float(i + 1) * ANCHOR_ONLY_VERT_STEP
-		var p1_x := P1_ROUTE_LANE_X + (72.0 if i % 2 == 0 else -36.0)
-		var p2_x := P2_ROUTE_LANE_X + (72.0 if i % 2 == 1 else -36.0)
-		# 两路锚点略错开高度，避免空中误选到对方路线的同极锚点
+	for i in anchor_count:
+		var y := base_y - float(i + 1) * vert_step
+		var p1_x := P1_ROUTE_LANE_X + (route_horiz_zigzag if i % 2 == 0 else -route_horiz_zigzag * 0.45)
+		var p2_x := P2_ROUTE_LANE_X + (route_horiz_zigzag if i % 2 == 1 else -route_horiz_zigzag * 0.45)
 		var pos_p1 := Vector2(clampf(p1_x, 240.0, 470.0), y)
-		var pos_p2 := Vector2(clampf(p2_x, 610.0, 840.0), y - ANCHOR_ONLY_VERT_STEP * 0.14)
+		var pos_p2 := Vector2(clampf(p2_x, 610.0, 840.0), y - vert_step * 0.22)
 
 		pos_p1 = _clamp_anchor_to_reach(prev_p1, pos_p1, max_reach)
 		pos_p2 = _clamp_anchor_to_reach(prev_p2, pos_p2, max_reach)
 
-		# 蓝 N 走 S 链，红 S 走 N 链（异极吸引）
 		_place_route_anchor(pos_p1, false)
 		_place_route_anchor(pos_p2, true)
 
 		prev_p1 = pos_p1
 		prev_p2 = pos_p2
+
+
+func _effective_route_vert_step() -> float:
+	var horiz := route_horiz_zigzag
+	var max_vert := sqrt(maxf(impulse_max_range * ROUTE_REACH_SAFETY, 1.0) ** 2 - horiz * horiz)
+	return clampf(route_vert_step, 220.0, max_vert * 0.92)
+
+
+func _route_anchor_count(base_y: float, vert_step: float) -> int:
+	var climb := base_y - route_top_y
+	return maxi(4, int(ceil(climb / maxf(vert_step, 1.0))))
 
 
 func _clamp_anchor_to_reach(from: Vector2, target: Vector2, max_reach: float) -> Vector2:

@@ -13,6 +13,8 @@ size = Vector2(120, 3100)
 
 [node name="MainArena" type="Node2D" unique_id=1743823015]
 script = ExtResource("1_main")
+impulse_attract_speed = 1960.0
+route_vert_step = 360.0
 
 [node name="Background" type="Node2D" parent="." unique_id=597998657]
 z_index = -10

@@ -27,7 +27,8 @@
 | 组 | 关键项 |
 |----|--------|
 | Magnet Gameplay | `Pvp Dual Key Impulse` 开关（关则回到仅锚点） |
-| Anchor Impulse | 锚点射程 / 速度 / 上偏 |
+| Anchor Impulse | 锚点射程 / **Attract Speed 1960** / 上偏 |
+| Guaranteed Routes | **Route Vert Step**（360，越大越疏）/ Route Top Y |
 | Player Impulse | 对手射程（280）/ 速度（520）/ 冷却 |
 
 ### 回滚
