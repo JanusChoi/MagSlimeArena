@@ -11,6 +11,8 @@ if ! command -v "$GODOT" >/dev/null 2>&1; then
 fi
 
 mkdir -p web
+# 先 import，确保新素材进 .godot/imported，否则 pck 会漏打包（锚点/lava 帧等）
+"$GODOT" --headless --import
 "$GODOT" --headless --export-release "Web" "$ROOT/web/index.html"
 echo "导出完成: $ROOT/web/"
 echo "提交 web/ 并 push 后 Vercel 会自动更新。"
