@@ -29,19 +29,19 @@ line_width = 5.0
 [node name="VisualRoot" type="Node2D" parent="."]
 
 [node name="MagnetRing" type="Polygon2D" parent="VisualRoot"]
+visible = false
 color = Color(0.5, 0.85, 1, 0.45)
 polygon = PackedVector2Array(52, 0, 47.801, 20.82, 36.766, 36.766, 20.82, 47.801, 0, 52, -20.82, 47.801, -36.766, 36.766, -47.801, 20.82, -52, 0, -47.801, -20.82, -36.766, -36.766, -20.82, -47.801, 0, -52, 20.82, -47.801, 36.766, -36.766, 47.801, -20.82)
 
-[node name="Visual" type="Polygon2D" parent="VisualRoot"]
-color = Color(0.25, 0.55, 1, 1)
-polygon = PackedVector2Array(36, 0, 33.093, 14.412, 25.457, 25.457, 14.412, 33.093, 0, 36, -14.412, 33.093, -25.457, 25.457, -33.093, 14.412, -36, 0, -33.093, -14.412, -25.457, -25.457, -14.412, -33.093, 0, -36, 14.412, -33.093, 25.457, -25.457, 33.093, -14.412)
+[node name="Sprite" type="AnimatedSprite2D" parent="VisualRoot"]
+position = Vector2(0, 14)
 
 [node name="PolarityLabel" type="Label" parent="VisualRoot"]
 offset_left = -24.0
-offset_top = -58.0
+offset_top = -72.0
 offset_right = 24.0
-offset_bottom = -28.0
-theme_override_font_sizes/font_size = 20
+offset_bottom = -42.0
+theme_override_font_sizes/font_size = 18
 text = "P1"
 horizontal_alignment = 1
 vertical_alignment = 1

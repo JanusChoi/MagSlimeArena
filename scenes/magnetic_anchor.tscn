@@ -1,13 +1,14 @@
-[gd_scene load_steps=2 format=3 uid="uid://85njw5pd13jw"]
+[gd_scene load_steps=3 format=3 uid="uid://85njw5pd13jw"]
 
 [ext_resource type="Script" path="res://scripts/magnetic_anchor.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/anchors/anchor_n_pole.png" id="2_tex_n"]
 
 [node name="MagneticAnchor" type="Node2D"]
 script = ExtResource("1_script")
 
-[node name="Visual" type="Polygon2D" parent="."]
-color = Color(0.25, 0.55, 1, 0.85)
-polygon = PackedVector2Array(28, 0, 25.739, 11.432, 19.799, 19.799, 11.432, 25.739, 0, 28, -11.432, 25.739, -19.799, 19.799, -25.739, 11.432, -28, 0, -25.739, -11.432, -19.799, -19.799, -11.432, -25.739, 0, -28, 11.432, -25.739, 19.799, -19.799, 25.739, -11.432)
+[node name="Visual" type="Sprite2D" parent="."]
+centered = true
+texture = ExtResource("2_tex_n")
 
 [node name="PolarityLabel" type="Label" parent="."]
 visible = false

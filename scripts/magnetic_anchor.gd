@@ -1,10 +1,14 @@
 extends Node2D
-## 墙锚攀岩点：左 S / 右 N，异极可抓握。
+## 墙锚攀岩点：N / S 极精灵，异极可抓握。
 
 @export var is_north_pole: bool = true
 @export var wall_side: int = -1  ## -1=左墙, 1=右墙, 0=自由放置
+@export var display_scale: float = 1.0
 
-@onready var _visual: Polygon2D = $Visual
+const _TEX_N := preload("res://assets/anchors/anchor_n_pole.png")
+const _TEX_S := preload("res://assets/anchors/anchor_s_pole.png")
+
+@onready var _visual: Sprite2D = $Visual
 @onready var _label: Label = $PolarityLabel
 
 var _latched_by: Node2D = null
@@ -35,22 +39,30 @@ func _snap_to_wall() -> void:
 	if wall_side == 0:
 		return
 	var inner_x: float = _WALL_INNER_X.get(wall_side, _WALL_INNER_X[-1])
-	var radius := 28.0
+	var radius := _anchor_radius()
 	if wall_side < 0:
 		position.x = inner_x + radius
 	else:
 		position.x = inner_x - radius
 
 
+func _anchor_radius() -> float:
+	if _visual != null and _visual.texture != null:
+		return _visual.texture.get_height() * 0.5 * display_scale
+	return 25.0
+
+
 func _update_visual() -> void:
-	var base := Color(0.25, 0.55, 1.0, 0.85) if is_north_pole else Color(1.0, 0.35, 0.35, 0.85)
 	if _visual:
+		_visual.texture = _TEX_N if is_north_pole else _TEX_S
+		_visual.centered = true
+		var base_scale := display_scale
 		if _latched_by != null:
-			_visual.color = base.lightened(0.35)
-			_visual.scale = Vector2(1.18, 1.18)
+			_visual.modulate = Color(1.35, 1.35, 1.35, 1.0)
+			_visual.scale = Vector2.ONE * base_scale * 1.18
 		else:
-			_visual.color = base
-			_visual.scale = Vector2.ONE
+			_visual.modulate = Color.WHITE
+			_visual.scale = Vector2.ONE * base_scale
 		_visual.position.x = 0.0 if wall_side == 0 else (-10.0 if wall_side < 0 else 10.0)
 	if _label:
 		_label.visible = false

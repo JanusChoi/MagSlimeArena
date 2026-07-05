@@ -2,6 +2,8 @@
 
 Godot 4.x 本地双人物理 brawler：平台跳跃 + 最近目标磁力 + 岩浆淘汰。
 
+**游戏理念、Jam 主题 ANCHOR、完成度与扩展方向** → 见 [DESIGN.md](DESIGN.md)
+
 ## 快速开始
 
 1. 用 **Godot 4.3+** 打开本目录（含 `project.godot`）

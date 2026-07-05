@@ -1,5 +1,6 @@
 extends Node
-## Autoload: match scoring, input lock, best-of-7 (first to 4).
+## Autoload singleton (Project Settings -> GameSession).
+## Do not add class_name here; it conflicts with the autoload name.
 
 const WINS_TO_MATCH := 4
 const MAX_ROUNDS := 7

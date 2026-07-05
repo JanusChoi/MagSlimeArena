@@ -7,13 +7,15 @@ enum MagnetGameplay {
 	ANCHOR_IMPULSE_ONE_SHOT,
 }
 
-const ARENA_HEIGHT := 3100.0
 const ARENA_WIDTH := 1080.0
 const LEVEL_COUNT := 11
-const START_PLATFORM_Y := 2480.0
 const PLAYER_STAND_OFFSET := 48.0
 const PLATFORM_BASE_HALF_WIDTH := 100.0
 const FINISH_LINE_ABOVE_TOP := 100.0
+
+@export_group("Arena Layout")
+@export var arena_height: float = 4000.0
+@export var start_platform_y: float = 3000.0
 
 ## 极端测试：仅出生台 + 垂直锚点链（Inspector 可关）
 @export var anchor_only_climb_test: bool = true
@@ -31,17 +33,26 @@ const FINISH_LINE_ABOVE_TOP := 100.0
 @export var impulse_up_bias: float = 0.48
 @export var impulse_distance_bonus: float = 0.35
 
-@export_group("Player Impulse (dual-key G / Option · weak hook)")
-@export var player_impulse_max_range: float = 280.0
-@export var player_impulse_attract_speed: float = 520.0
+@export_group("Player Impulse (dual-key G / Option · sabotage hook)")
+@export var player_impulse_max_range: float = 1024.0
+@export var player_impulse_attract_speed: float = 980.0
 @export var player_impulse_up_bias: float = 0.22
-@export var player_impulse_distance_bonus: float = 0.15
-@export var player_impulse_cooldown: float = 0.45
+@export var player_impulse_distance_bonus: float = 0.5
+@export var player_impulse_cooldown: float = 0.5
+## 对手被拽向钩人者的速度倍率（主效果）
+@export var player_hook_target_speed_scale: float = 1.0
+## 钩人者自身被吸向对手的速度倍率（副效果，宜明显弱于 target）
+@export var player_hook_self_speed_scale: float = 0.22
+## 对手在上方时，额外加强向下拽的分量（领先者被拉回危险区）
+@export var player_hook_target_down_bias: float = 0.35
 
 @export_group("Guaranteed Routes")
 @export var route_vert_step: float = 360.0
 @export var route_horiz_zigzag: float = 110.0
-@export var route_top_y: float = 720.0
+@export var route_top_y: float = 480.0
+## 主路线旁零星异色锚：数量 ≤ 该侧主锚 × 此比例（0.5 = 一半）
+@export var scatter_opposite_ratio: float = 0.5
+@export var scatter_min_separation: float = 72.0
 
 const ROUTE_REACH_SAFETY := 0.86
 const P1_ROUTE_LANE_X := LEFT_LANE_X
@@ -70,7 +81,7 @@ const WALL_INNER_LEFT := 120.0
 const WALL_INNER_RIGHT := 960.0
 const WALL_TUCK_MARGIN := 20.0
 
-enum Side { LEFT = -1, CENTER = 0, RIGHT = 1 }
+enum ArenaSide { LEFT = -1, CENTER = 0, RIGHT = 1 }
 
 @onready var _platforms: Node2D = $Platforms
 @onready var _anchors: Node2D = $Anchors
@@ -81,7 +92,7 @@ enum Side { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _round_label: Label = $HUD/RoundLabel
 @onready var _countdown_label: Label = $HUD/CountdownLabel
 @onready var _round_banner: Label = $HUD/RoundBanner
-@onready var _lava_visual: ColorRect = $HUD/LavaOverlay
+@onready var _lava_visual: Control = $HUD/LavaOverlay
 @onready var _match_result: CanvasLayer = $MatchResult
 @onready var _match_winner: Label = $MatchResult/Panel/MatchWinner
 @onready var _match_score: Label = $MatchResult/Panel/MatchScore
@@ -90,10 +101,15 @@ enum Side { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _arena_camera: Camera2D = $ArenaCamera
 @onready var _player1: SlimePlayer = $Player1
 @onready var _player2: SlimePlayer = $Player2
+@onready var _background: Node2D = $Background
+@onready var _left_wall: StaticBody2D = $LeftWall
+@onready var _right_wall: StaticBody2D = $RightWall
+@onready var _hook_fx: Node = $HookImpactFx
 
-var _spawn_player_y: float = START_PLATFORM_Y - PLAYER_STAND_OFFSET
+var _spawn_player_y: float = 2952.0
 var _platform_centers: Array[Vector2] = []
 var _platform_scales: Array[float] = []
+var _placed_anchor_positions: Array[Vector2] = []
 var _round_over: bool = false
 
 
@@ -117,23 +133,46 @@ func _process(_delta: float) -> void:
 func _bootstrap_arena() -> void:
 	_round_over = false
 	GameSession.set_input_locked(false)
+	_sync_arena_geometry()
 	_build_staircase()
 	_build_scattered_anchors()
 	_setup_finish_line()
-	_place_players()
-	_player1.reset_for_round()
-	_player2.reset_for_round()
 	_finish_line.reset()
+	_spawn_player_y = start_platform_y - PLAYER_STAND_OFFSET
+	_arena_camera.reset_for_round(_player1, _player2, _spawn_player_y, _finish_line.finish_y)
+	_place_players()
 	if _hazard.has_method("reset_for_round"):
 		_hazard.reset_for_round()
 	_hazard.setup(_arena_camera, _player1, _player2)
 	if not _hazard.player_eliminated.is_connected(_on_round_lost_by_lava):
 		_hazard.player_eliminated.connect(_on_round_lost_by_lava)
-	_arena_camera.reset_for_round(_player1, _player2, _spawn_player_y, _finish_line.finish_y)
 	if _lava_visual and _lava_visual.has_method("set_scroll_active"):
 		_lava_visual.set_scroll_active(false)
 	if not _finish_line.player_crossed.is_connected(_on_round_won_by_finish):
 		_finish_line.player_crossed.connect(_on_round_won_by_finish)
+	if _hook_fx and _hook_fx.has_method("setup"):
+		_hook_fx.setup(_arena_camera)
+	if _hook_fx and _hook_fx.has_method("reset_for_round"):
+		_hook_fx.reset_for_round()
+
+
+func trigger_hook_impact(pull_direction: Vector2) -> void:
+	if _hook_fx and _hook_fx.has_method("trigger"):
+		_hook_fx.trigger(pull_direction)
+
+
+func _sync_arena_geometry() -> void:
+	var wall_center_y := arena_height * 0.5
+	for wall in [_left_wall, _right_wall]:
+		if wall == null:
+			continue
+		wall.position.y = wall_center_y
+		var shape_node := wall.get_node_or_null("CollisionShape2D") as CollisionShape2D
+		if shape_node != null and shape_node.shape is RectangleShape2D:
+			(shape_node.shape as RectangleShape2D).size.y = arena_height
+
+	if _background != null and _background.has_method("configure_spawn"):
+		_background.configure_spawn(start_platform_y - PLAYER_STAND_OFFSET)
 
 
 func _build_staircase() -> void:
@@ -148,26 +187,26 @@ func _build_staircase() -> void:
 		return
 
 	var prev_x := 540.0
-	var prev_y := START_PLATFORM_Y
+	var prev_y := start_platform_y
 	var prev_scale := randf_range(SPAWN_PLATFORM_SCALE_MIN, SPAWN_PLATFORM_SCALE_MAX)
-	var prev_side := Side.CENTER
-	var next_side := Side.RIGHT if randf() > 0.5 else Side.LEFT
+	var prev_side := ArenaSide.CENTER
+	var next_side := ArenaSide.RIGHT if randf() > 0.5 else ArenaSide.LEFT
 
 	for i in LEVEL_COUNT:
 		var platform: StaticBody2D = PLATFORM_SCENE.instantiate()
 		var y: float
 		var x: float
 		var scale_x: float
-		var side: int = Side.CENTER
+		var side: ArenaSide = ArenaSide.CENTER
 
 		if i == 0:
 			x = CENTER_LANE_X
-			y = START_PLATFORM_Y
+			y = start_platform_y
 			scale_x = prev_scale
-			side = Side.CENTER
+			side = ArenaSide.CENTER
 		else:
 			if i == 1:
-				var placement := _spawn_safe_jump_platform(prev_x, prev_y, prev_scale, Side.CENTER)
+				var placement := _spawn_safe_jump_platform(prev_x, prev_y, prev_scale, ArenaSide.CENTER)
 				x = placement.x
 				y = placement.y
 				scale_x = placement.scale
@@ -175,9 +214,9 @@ func _build_staircase() -> void:
 			else:
 				side = next_side
 				if i % 6 == 3:
-					side = Side.CENTER
+					side = ArenaSide.CENTER
 				else:
-					next_side = Side.RIGHT if next_side == Side.LEFT else Side.LEFT
+					next_side = ArenaSide.RIGHT if next_side == ArenaSide.LEFT else ArenaSide.LEFT
 
 				var placement := _pick_platform_placement(prev_x, prev_y, prev_scale, prev_side, side, i)
 				x = placement.x
@@ -208,11 +247,11 @@ func _build_staircase() -> void:
 func _build_spawn_platform_only() -> void:
 	var scale_x := randf_range(SPAWN_PLATFORM_SCALE_MIN, SPAWN_PLATFORM_SCALE_MAX)
 	var platform: StaticBody2D = PLATFORM_SCENE.instantiate()
-	platform.position = Vector2(CENTER_LANE_X, START_PLATFORM_Y)
+	platform.position = Vector2(CENTER_LANE_X, start_platform_y)
 	platform.min_scale_x = scale_x
 	platform.max_scale_x = scale_x
 	_platforms.add_child(platform)
-	_platform_centers.append(Vector2(CENTER_LANE_X, START_PLATFORM_Y))
+	_platform_centers.append(Vector2(CENTER_LANE_X, start_platform_y))
 	_platform_scales.append(scale_x)
 
 
@@ -235,11 +274,11 @@ func _setup_finish_line() -> void:
 func _spawn_safe_jump_platform(
 	prev_x: float, prev_y: float, prev_scale: float, avoid_side: int
 ) -> Dictionary:
-	var side := Side.LEFT if randf() > 0.5 else Side.RIGHT
-	if avoid_side == Side.LEFT:
-		side = Side.RIGHT
-	elif avoid_side == Side.RIGHT:
-		side = Side.LEFT
+	var side := ArenaSide.LEFT if randf() > 0.5 else ArenaSide.RIGHT
+	if avoid_side == ArenaSide.LEFT:
+		side = ArenaSide.RIGHT
+	elif avoid_side == ArenaSide.RIGHT:
+		side = ArenaSide.LEFT
 
 	var scale_x := _max_wall_scale_for_spawn_clearance()
 	var x := _wall_tuck_x(side, scale_x)
@@ -258,7 +297,7 @@ func _max_wall_scale_for_spawn_clearance() -> float:
 
 func _wall_tuck_x(side: int, scale_x: float) -> float:
 	var half := _half_width(scale_x)
-	if side == Side.LEFT:
+	if side == ArenaSide.LEFT:
 		return WALL_INNER_LEFT + half + WALL_TUCK_MARGIN
 	return WALL_INNER_RIGHT - half - WALL_TUCK_MARGIN
 
@@ -267,12 +306,12 @@ func _pick_platform_placement(
 	prev_x: float, prev_y: float, prev_scale: float, prev_side: int, preferred_side: int, level_index: int
 ) -> Dictionary:
 	var sides_to_try: Array[int] = [preferred_side]
-	if preferred_side != Side.LEFT:
-		sides_to_try.append(Side.LEFT)
-	if preferred_side != Side.RIGHT:
-		sides_to_try.append(Side.RIGHT)
-	if preferred_side != Side.CENTER:
-		sides_to_try.append(Side.CENTER)
+	if preferred_side != ArenaSide.LEFT:
+		sides_to_try.append(ArenaSide.LEFT)
+	if preferred_side != ArenaSide.RIGHT:
+		sides_to_try.append(ArenaSide.RIGHT)
+	if preferred_side != ArenaSide.CENTER:
+		sides_to_try.append(ArenaSide.CENTER)
 
 	var best := _forced_lane_placement(prev_x, prev_y, prev_scale, preferred_side, level_index)
 
@@ -283,7 +322,7 @@ func _pick_platform_placement(
 			var scale_x := randf_range(MIN_PLATFORM_SCALE, MAX_PLATFORM_SCALE)
 			var x := _lane_x_for_side(side, scale_x, level_index)
 
-			if side != Side.CENTER and prev_side != Side.CENTER and side == prev_side:
+			if side != ArenaSide.CENTER and prev_side != ArenaSide.CENTER and side == prev_side:
 				continue
 
 			if not _is_placement_valid(prev_x, prev_y, prev_scale, x, y, scale_x, level_index):
@@ -297,8 +336,8 @@ func _pick_platform_placement(
 
 
 func _forced_lane_placement(prev_x: float, prev_y: float, prev_scale: float, side: int, level_index: int) -> Dictionary:
-	var opposite := Side.RIGHT if side == Side.LEFT else Side.LEFT
-	var use_side := opposite if side == Side.CENTER else side
+	var opposite := ArenaSide.RIGHT if side == ArenaSide.LEFT else ArenaSide.LEFT
+	var use_side := opposite if side == ArenaSide.CENTER else side
 	var scale_x := randf_range(MIN_PLATFORM_SCALE, MAX_PLATFORM_SCALE)
 	var x := _lane_x_for_side(use_side, scale_x, level_index)
 	var y := prev_y - MIN_VERT_STEP
@@ -312,9 +351,9 @@ func _lane_x_for_side(side: int, scale_x: float, _level_index: int = -1) -> floa
 	var jitter := randf_range(-LANE_JITTER, LANE_JITTER)
 
 	match side:
-		Side.LEFT:
+		ArenaSide.LEFT:
 			return clampf(LEFT_LANE_X + jitter, 120.0 + half, CENTER_LANE_X - half * 0.35)
-		Side.RIGHT:
+		ArenaSide.RIGHT:
 			return clampf(RIGHT_LANE_X + jitter, CENTER_LANE_X + half * 0.35, 960.0 - half)
 		_:
 			return clampf(CENTER_LANE_X + jitter * 0.5, 120.0 + half, 960.0 - half)
@@ -364,11 +403,11 @@ func _overlap_amount(ax: float, a_half: float, bx: float, b_half: float) -> floa
 	return maxf(right - left, 0.0)
 
 
-func _score_placement(prev_x: float, x: float, vert_step: float, scale_x: float, side: int) -> float:
+func _score_placement(prev_x: float, x: float, vert_step: float, _scale_x: float, side: int) -> float:
 	var horiz := absf(x - prev_x)
 	var score := horiz * 0.6
 	score += clampf(vert_step, MIN_VERT_STEP, MAX_VERT_STEP) * 0.25
-	if side != Side.CENTER:
+	if side != ArenaSide.CENTER:
 		score += 40.0
 	if horiz >= 280.0:
 		score += 50.0
@@ -414,7 +453,7 @@ func _build_scattered_anchors() -> void:
 
 
 func _balanced_polarities(count: int) -> Array[bool]:
-	var half := count / 2
+	var half := count >> 1
 	var flags: Array[bool] = []
 	for i in count:
 		flags.append(i < half)
@@ -426,15 +465,18 @@ func _build_guaranteed_player_routes() -> void:
 	if _platform_centers.is_empty():
 		return
 
+	_placed_anchor_positions.clear()
 	var base_y := _platform_centers[0].y
 	var vert_step := _effective_route_vert_step()
 	var anchor_count := _route_anchor_count(base_y, vert_step)
 	var max_reach := impulse_max_range * ROUTE_REACH_SAFETY
 	var prev_p1 := Vector2(P1_SPAWN_X, _spawn_player_y)
 	var prev_p2 := Vector2(P2_SPAWN_X, _spawn_player_y)
+	var route_ys: Array[float] = []
 
 	for i in anchor_count:
 		var y := base_y - float(i + 1) * vert_step
+		route_ys.append(y)
 		var p1_x := P1_ROUTE_LANE_X + (route_horiz_zigzag if i % 2 == 0 else -route_horiz_zigzag * 0.45)
 		var p2_x := P2_ROUTE_LANE_X + (route_horiz_zigzag if i % 2 == 1 else -route_horiz_zigzag * 0.45)
 		var pos_p1 := Vector2(clampf(p1_x, 240.0, 470.0), y)
@@ -443,11 +485,14 @@ func _build_guaranteed_player_routes() -> void:
 		pos_p1 = _clamp_anchor_to_reach(prev_p1, pos_p1, max_reach)
 		pos_p2 = _clamp_anchor_to_reach(prev_p2, pos_p2, max_reach)
 
+		# 左线主链 S 极（红）；右线主链 N 极（蓝）
 		_place_route_anchor(pos_p1, false)
 		_place_route_anchor(pos_p2, true)
 
 		prev_p1 = pos_p1
 		prev_p2 = pos_p2
+
+	_scatter_opposite_lane_anchors(route_ys, anchor_count, vert_step)
 
 
 func _effective_route_vert_step() -> float:
@@ -475,12 +520,85 @@ func _place_route_anchor(pos: Vector2, is_north: bool) -> void:
 	anchor.set("wall_side", 0)
 	anchor.set("is_north_pole", is_north)
 	_anchors.add_child(anchor)
+	_placed_anchor_positions.append(pos)
+
+
+func _scatter_opposite_lane_anchors(route_ys: Array[float], primary_count: int, vert_step: float) -> void:
+	if primary_count <= 0 or route_ys.is_empty():
+		return
+
+	var max_extra := maxi(1, int(floor(float(primary_count) * scatter_opposite_ratio)))
+	var left_n_extra := randi_range(1, max_extra)
+	var right_s_extra := randi_range(1, max_extra)
+
+	var left_indices := _shuffled_route_indices(primary_count)
+	var right_indices := _shuffled_route_indices(primary_count)
+
+	# 左线主链 S（红）→ 零星 N（蓝）
+	for j in left_n_extra:
+		if j >= left_indices.size():
+			break
+		var idx: int = left_indices[j]
+		var y := route_ys[idx] - vert_step * (0.12 if idx % 2 == 0 else 0.28)
+		var x := _scatter_lane_x(ArenaSide.LEFT, idx, true)
+		_try_place_scatter_anchor(Vector2(x, y), true)
+
+	# 右线主链 N（蓝）→ 零星 S（红），层位与左线错开
+	for j in right_s_extra:
+		if j >= right_indices.size():
+			break
+		var idx: int = right_indices[(j + (primary_count >> 1)) % right_indices.size()]
+		var y := route_ys[idx] - vert_step * (0.2 if idx % 2 == 1 else 0.34)
+		var x := _scatter_lane_x(ArenaSide.RIGHT, idx, true)
+		_try_place_scatter_anchor(Vector2(x, y), false)
+
+
+func _shuffled_route_indices(count: int) -> Array[int]:
+	var indices: Array[int] = []
+	for i in count:
+		indices.append(i)
+	indices.shuffle()
+	return indices
+
+
+func _scatter_lane_x(side: int, row_index: int, opposite_zigzag: bool) -> float:
+	var base_x := LEFT_LANE_X if side == ArenaSide.LEFT else RIGHT_LANE_X
+	var zig := route_horiz_zigzag * (0.55 if opposite_zigzag else 1.0)
+	if row_index % 2 == 0:
+		base_x += zig
+	else:
+		base_x -= zig * 0.5
+	base_x += randf_range(-LANE_JITTER, LANE_JITTER)
+	if side == ArenaSide.LEFT:
+		return clampf(base_x, 240.0, 470.0)
+	return clampf(base_x, 610.0, 840.0)
+
+
+func _try_place_scatter_anchor(pos: Vector2, is_north: bool) -> bool:
+	if not _is_anchor_spot_free(pos):
+		return false
+	_place_route_anchor(pos, is_north)
+	return true
+
+
+func _is_anchor_spot_free(pos: Vector2) -> bool:
+	for existing in _placed_anchor_positions:
+		if existing.distance_to(pos) < scatter_min_separation:
+			return false
+	return true
 
 
 func _place_players() -> void:
-	_spawn_player_y = START_PLATFORM_Y - PLAYER_STAND_OFFSET
-	_player1.global_position = Vector2(420.0, _spawn_player_y)
-	_player2.global_position = Vector2(660.0, _spawn_player_y)
+	_revive_player_at_spawn(_player1, P1_SPAWN_X)
+	_revive_player_at_spawn(_player2, P2_SPAWN_X)
+
+
+func _revive_player_at_spawn(player: SlimePlayer, spawn_x: float) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	player.visible = true
+	player.global_position = Vector2(spawn_x, _spawn_player_y)
+	player.reset_for_round()
 
 
 func _reset_arena_for_next_round() -> void:
@@ -500,7 +618,7 @@ func _refresh_score_hud() -> void:
 func _update_countdown_hud() -> void:
 	if _countdown_label == null or _arena_camera == null:
 		return
-	var remaining := _arena_camera.get_countdown_display()
+	var remaining: int = _arena_camera.get_countdown_display()
 	if remaining > 0 and not _arena_camera.is_scrolling():
 		_countdown_label.text = str(remaining)
 		_countdown_label.visible = true
@@ -532,7 +650,12 @@ func _end_round(winner_id: int) -> void:
 	if winner_id != 2 and _player2.has_method("set_eliminated"):
 		_player2.set_eliminated()
 
-	var match_over := GameSession.record_round_win(winner_id)
+	for player in [_player1, _player2]:
+		if player is RigidBody2D:
+			player.linear_velocity = Vector2.ZERO
+			player.angular_velocity = 0.0
+
+	var match_over: bool = GameSession.record_round_win(winner_id)
 	_refresh_score_hud()
 	await _show_round_banner(winner_id)
 
@@ -553,7 +676,7 @@ func _show_round_banner(winner_id: int) -> void:
 
 
 func _show_match_result() -> void:
-	var winner_id := GameSession.get_match_winner_id()
+	var winner_id: int = GameSession.get_match_winner_id()
 	if _match_winner:
 		_match_winner.text = "%s WINS" % GameSession.player_tag(winner_id)
 	if _match_score:

@@ -1,18 +1,18 @@
 extends Camera2D
 ## 分档上滚：默认固定视角；领先者跳出画面顶部且终点尚不可见时，镜头上移一级。
-## 5 秒后另有岩浆驱动的持续上滚压力。
+## 开局倒计时结束后，岩浆驱动的持续上滚压力开始生效。
 
 signal scroll_started
 
 @export var follow_smoothing: float = 4.0
 @export var lava_screen_fraction: float = 0.25
-@export var scroll_speed: float = 25.0
-@export var start_delay: float = 5.0
+@export var start_delay: float = 12.0
 @export var safe_margin_above_lava: float = 120.0
 @export var step_scroll_amount: float = 380.0
-@export var leader_top_margin: float = 100.0
-@export var leader_reset_margin: float = 220.0
-@export var finish_far_margin: float = 80.0
+@export var leader_top_margin: float = 80.0
+@export var leader_reset_margin: float = 180.0
+@export var leader_offscreen_chase: float = 40.0
+@export var scroll_speed: float = 20.0
 
 var _player1: Node2D
 var _player2: Node2D
@@ -113,11 +113,14 @@ func _update_leader_step(leader_y: float) -> void:
 	if leader_y > reset_y:
 		_can_trigger_next_step = true
 
-	if not _can_trigger_next_step:
+	# 领先者已超出画面上沿：直接追焦，不再被「终点线已可见」卡住
+	if leader_y <= top_world_y - leader_offscreen_chase:
+		var chase_y := _spawn_camera_y(leader_y)
+		_base_cam_y = minf(_base_cam_y, chase_y)
+		_base_cam_y = maxf(_base_cam_y, _min_cam_y)
 		return
 
-	var finish_far_above := _finish_y < top_world_y - finish_far_margin
-	if not finish_far_above:
+	if not _can_trigger_next_step:
 		return
 
 	if leader_y <= trigger_y:

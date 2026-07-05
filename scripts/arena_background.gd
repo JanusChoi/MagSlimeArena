@@ -18,6 +18,18 @@ func _ready() -> void:
 	if texture == null:
 		push_warning("ArenaBackground: 未指定 texture")
 		return
+	_rebuild_tiles()
+
+
+func configure_spawn(spawn_y: float) -> void:
+	spawn_leader_y = spawn_y
+	if texture != null:
+		_rebuild_tiles()
+
+
+func _rebuild_tiles() -> void:
+	for child in get_children():
+		child.queue_free()
 
 	var bottom_y := anchor_bottom_y
 	if align_bottom_to_spawn_lava:

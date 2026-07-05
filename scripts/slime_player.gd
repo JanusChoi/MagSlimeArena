@@ -16,6 +16,17 @@ extends RigidBody2D
 @export var anchor_entry_radius: float = 58.0
 @export var anchor_highlight_sec: float = 0.35
 
+@export_group("Sprite")
+@export var slime_display_height: float = 92.0
+@export var slime_sprite_offset: Vector2 = Vector2(0.0, 14.0)
+@export var idle_anim_fps: float = 12.0
+@export var idle_source_height: float = 256.0
+
+const _BLUE_IDLE_FRAME_COUNT := 61
+const _BLUE_IDLE_DIR := "res://assets/players/animations/blueslime_idle/frame_%04d.png"
+const _RED_IDLE_FRAME_COUNT := 61
+const _RED_IDLE_DIR := "res://assets/players/animations/redslime_idle/frame_%04d.png"
+
 @export_group("Squash & Stretch")
 @export var stretch_amount: float = 0.35
 @export var squash_amount: float = 0.25
@@ -33,11 +44,14 @@ extends RigidBody2D
 const _GROUND_PROBE_EXTRA := 10.0
 const _MagneticUtilsScript := preload("res://scripts/magnetic_utils.gd")
 
+static var _cached_blue_idle_frames: SpriteFrames
+static var _cached_red_idle_frames: SpriteFrames
+
 @onready var _ground_ray: RayCast2D = $GroundRay
 @onready var _collision_shape: CollisionShape2D = $CollisionShape2D
 @onready var _visual_root: Node2D = $VisualRoot
 @onready var _polarity_label: Label = $VisualRoot/PolarityLabel
-@onready var _visual: Polygon2D = $VisualRoot/Visual
+@onready var _sprite: AnimatedSprite2D = $VisualRoot/Sprite
 @onready var _magnet_ring: Polygon2D = $VisualRoot/MagnetRing
 @onready var _magnet_link: Node2D = $MagnetLinkDraw
 
@@ -62,6 +76,7 @@ var _impulse_link_target: Node2D = null
 var _impulse_link_timer: float = 0.0
 var _impulse_link_to_player: bool = false
 var _magnet_flash_timer: float = 0.0
+var _lava_heat: float = 0.0
 
 const _INPUT_KEYS := {
 	1: {
@@ -216,10 +231,25 @@ func _trigger_player_impulse() -> void:
 		return
 
 	var dir := to_target / dist
+	var base_speed := arena.player_impulse_attract_speed + dist * arena.player_impulse_distance_bonus
+	var pull_dir := -dir
+	if opponent.global_position.y < global_position.y:
+		pull_dir = (pull_dir + Vector2(0.0, arena.player_hook_target_down_bias)).normalized()
+
+	# 主效果：对手被拽向钩人者（落后者在下方时 ≈ 把领先者往下拉）
+	if opponent is RigidBody2D:
+		var opp_body := opponent as RigidBody2D
+		opp_body.sleeping = false
+		opp_body.linear_velocity = pull_dir * base_speed * arena.player_hook_target_speed_scale
+
+	# 副效果：钩人者自身仅弱吸向对手
 	sleeping = false
-	var fly_dir := (dir + Vector2(0.0, -arena.player_impulse_up_bias)).normalized()
-	var speed := arena.player_impulse_attract_speed + dist * arena.player_impulse_distance_bonus
-	linear_velocity = fly_dir * speed
+	var self_dir := (dir + Vector2(0.0, -arena.player_impulse_up_bias)).normalized()
+	var self_speed := base_speed * arena.player_hook_self_speed_scale
+	linear_velocity = self_dir * self_speed
+
+	if arena.has_method("trigger_hook_impact"):
+		arena.trigger_hook_impact(pull_dir)
 
 	_impulse_link_target = opponent
 	_impulse_link_to_player = true
@@ -274,16 +304,36 @@ func _find_closest_anchor_in_range(max_range: float) -> Node2D:
 func set_eliminated() -> void:
 	_clear_anchor_highlight()
 	_eliminated = true
-	if _visual:
-		_visual.modulate = Color(0.45, 0.45, 0.45, 0.7)
+	freeze = true
+	linear_velocity = Vector2.ZERO
+	angular_velocity = 0.0
+	if _sprite:
+		_sprite.modulate = Color(0.45, 0.45, 0.45, 0.7)
 	if _magnet_ring:
 		_magnet_ring.visible = false
 	if _magnet_link:
 		_magnet_link.set_wavy_line(PackedVector2Array(), Color.WHITE, false)
 
 
+func set_lava_heat(heat: float) -> void:
+	_lava_heat = clampf(heat, 0.0, 1.0)
+
+
+func apply_lava_sink(heat: float, depth: float, delta: float) -> void:
+	if _eliminated or heat <= 0.01:
+		return
+	sleeping = false
+	var sink := clampf(heat + depth / 120.0, 0.0, 1.4)
+	linear_velocity.y = maxf(linear_velocity.y, 180.0 * sink)
+	linear_velocity.y += 520.0 * sink * delta
+	if linear_velocity.y < 0.0:
+		linear_velocity.y = lerpf(linear_velocity.y, 0.0, clampf(heat * delta * 8.0, 0.0, 1.0))
+	linear_velocity.x *= 1.0 - clampf(heat * delta * 4.0, 0.0, 0.35)
+
+
 func reset_for_round() -> void:
 	_eliminated = false
+	_lava_heat = 0.0
 	_clear_anchor_highlight()
 	_jump_granted_anchors.clear()
 	_jumps_remaining = max_jumps
@@ -292,14 +342,23 @@ func reset_for_round() -> void:
 	_impulse_link_target = null
 	_impulse_link_timer = 0.0
 	_grapple_cooldown = 0.0
+	visible = true
 	freeze = false
 	sleeping = false
 	collision_layer = 2
 	collision_mask = 3
 	linear_velocity = Vector2.ZERO
 	angular_velocity = 0.0
-	if _visual:
-		_visual.modulate = Color.WHITE
+	global_rotation = 0.0
+	if _visual_root:
+		_visual_root.scale = Vector2.ONE
+		_visual_root.modulate = Color.WHITE
+		_visual_root.visible = true
+	if _sprite:
+		_sprite.visible = true
+		_sprite.modulate = Color.WHITE
+		if _sprite.sprite_frames != null and _sprite.sprite_frames.has_animation("idle"):
+			_sprite.play("idle")
 	if _magnet_ring:
 		_magnet_ring.visible = false
 
@@ -612,10 +671,54 @@ func _update_polarity_label() -> void:
 
 
 func _apply_player_color() -> void:
-	if _visual:
-		_visual.color = Color(0.25, 0.55, 1.0) if player_id == 1 else Color(1.0, 0.35, 0.35)
+	_apply_player_sprite()
 	if _magnet_ring:
 		_magnet_ring.color = Color(0.5, 0.85, 1.0, 0.45) if player_id == 1 else Color(1.0, 0.55, 0.55, 0.45)
+
+
+func _apply_player_sprite() -> void:
+	if _sprite == null:
+		return
+	if player_id == 1:
+		_sprite.sprite_frames = _get_blue_idle_frames()
+	else:
+		_sprite.sprite_frames = _get_red_idle_frames()
+	_sprite.play("idle")
+	var source_h: float = idle_source_height
+	var scale_factor: float = slime_display_height / maxf(source_h, 1.0)
+	_sprite.scale = Vector2(scale_factor, scale_factor)
+	_sprite.position = slime_sprite_offset
+	_sprite.centered = true
+
+
+func _get_blue_idle_frames() -> SpriteFrames:
+	if _cached_blue_idle_frames != null:
+		return _cached_blue_idle_frames
+	var frames := SpriteFrames.new()
+	frames.add_animation(&"idle")
+	frames.set_animation_speed(&"idle", idle_anim_fps)
+	frames.set_animation_loop(&"idle", true)
+	for i in range(1, _BLUE_IDLE_FRAME_COUNT + 1):
+		var tex: Texture2D = load(_BLUE_IDLE_DIR % i)
+		if tex:
+			frames.add_frame(&"idle", tex)
+	_cached_blue_idle_frames = frames
+	return frames
+
+
+func _get_red_idle_frames() -> SpriteFrames:
+	if _cached_red_idle_frames != null:
+		return _cached_red_idle_frames
+	var frames := SpriteFrames.new()
+	frames.add_animation(&"idle")
+	frames.set_animation_speed(&"idle", idle_anim_fps)
+	frames.set_animation_loop(&"idle", true)
+	for i in range(1, _RED_IDLE_FRAME_COUNT + 1):
+		var tex: Texture2D = load(_RED_IDLE_DIR % i)
+		if tex:
+			frames.add_frame(&"idle", tex)
+	_cached_red_idle_frames = frames
+	return frames
 
 
 func _update_magnet_visual() -> void:
@@ -629,15 +732,17 @@ func _update_magnet_visual() -> void:
 		else:
 			_magnet_ring.visible = _magnet_active
 
-	if _visual and not _eliminated:
+	if _sprite and not _eliminated:
+		var tint := Color.WHITE
 		if _just_granted_anchor_jump or _magnet_flash_timer > 0.0:
 			if _impulse_link_to_player and _magnet_flash_timer > 0.0:
-				_visual.modulate = Color(1.35, 1.15, 0.85)
+				tint = Color(1.35, 1.15, 0.85)
 			else:
-				_visual.modulate = Color(1.15, 1.45, 1.2)
+				tint = Color(1.15, 1.45, 1.2)
 		elif _grapple_active and _uses_dual_key_pvp():
-			_visual.modulate = Color(1.25, 1.2, 1.0)
+			tint = Color(1.25, 1.2, 1.0)
 		elif _magnet_active and not _uses_impulse_mode():
-			_visual.modulate = Color(1.35, 1.35, 1.5)
-		else:
-			_visual.modulate = Color.WHITE
+			tint = Color(1.35, 1.35, 1.5)
+		if _lava_heat > 0.001:
+			tint = tint.lerp(Color(1.5, 0.45, 0.18), _lava_heat)
+		_sprite.modulate = tint
