@@ -91,6 +91,7 @@ enum ArenaSide { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _score_p2: Label = $HUD/ScoreP2
 @onready var _round_label: Label = $HUD/RoundLabel
 @onready var _countdown_label: Label = $HUD/CountdownLabel
+@onready var _endless_countdown_label: Label = $HUD/EndlessCountdownLabel
 @onready var _controls_hint_p1: Label = $HUD/ControlsHintP1
 @onready var _controls_hint_p2: Label = $HUD/ControlsHintP2
 @onready var _round_banner: Label = $HUD/RoundBanner
@@ -600,6 +601,8 @@ func _set_players_frozen(frozen: bool) -> void:
 func _show_endless_fall_banner(player_id: int, still_alive: bool) -> void:
 	if _countdown_label:
 		_countdown_label.visible = false
+	if _endless_countdown_label:
+		_endless_countdown_label.visible = false
 	if _round_banner:
 		if still_alive:
 			_round_banner.text = "%s FELL!  %s" % [
@@ -615,16 +618,26 @@ func _show_endless_fall_banner(player_id: int, still_alive: bool) -> void:
 
 
 func _run_endless_resume_countdown() -> void:
-	if _countdown_label == null:
+	var label := _endless_countdown_label if _endless_countdown_label else _countdown_label
+	if label == null:
 		await get_tree().create_timer(3.0).timeout
 		return
+	if _countdown_label and label != _countdown_label:
+		_countdown_label.visible = false
 	for i in [3, 2, 1]:
 		if _round_over:
 			return
-		_countdown_label.text = str(i)
-		_countdown_label.visible = true
+		label.text = str(i)
+		label.visible = true
 		await get_tree().create_timer(1.0).timeout
-	_countdown_label.visible = false
+	label.visible = false
+
+
+func _hide_endless_countdown() -> void:
+	if _endless_countdown_label:
+		_endless_countdown_label.visible = false
+	if _countdown_label:
+		_countdown_label.visible = false
 
 
 func _launch_respawned_player(player_id: int) -> void:
@@ -655,8 +668,7 @@ func _cleanup_endless_respawn_freeze() -> void:
 	if _arena_camera.has_method("pause_scroll"):
 		_arena_camera.pause_scroll(false)
 	GameSession.set_input_locked(false)
-	if _countdown_label:
-		_countdown_label.visible = false
+	_hide_endless_countdown()
 
 
 func _respawn_player_above_lava(player_id: int, apply_launch_velocity: bool = true) -> void:
@@ -717,7 +729,7 @@ func _show_endless_result(winner_id: int) -> void:
 	if _match_winner:
 		_match_winner.text = "%s WINS" % GameSession.player_tag(winner_id)
 	if _match_score:
-		_match_score.text = "ENDLESS  ·  " + GameSession.get_score_label()
+		_match_score.text = GameSession.get_score_label()
 	_match_result.visible = true
 
 

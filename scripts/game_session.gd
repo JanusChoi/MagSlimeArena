@@ -93,15 +93,14 @@ func is_game_over() -> bool:
 
 func get_score_label() -> String:
 	if is_endless():
-		return "%s  %d - %d  %s" % [hp_hearts(1), p1_hp, p2_hp, hp_hearts(2)]
+		return "ENDLESS | P1 %s | P2 %s" % [hp_hearts(1), hp_hearts(2)]
 	return "%d - %d" % [p1_wins, p2_wins]
 
 
 func hp_hearts(player_id: int) -> String:
+	# ASCII-only: Godot Web default font lacks ♥/♡ glyphs (shows tofu boxes).
 	var hp := get_hp(player_id)
-	var full := "♥".repeat(hp)
-	var empty := "♡".repeat(ENDLESS_START_HP - hp)
-	return full + empty
+	return "HP %d/%d" % [hp, ENDLESS_START_HP]
 
 
 func get_round_label() -> String:
