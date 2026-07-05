@@ -1,6 +1,5 @@
 extends Camera2D
-## 分档上滚：默认固定视角；领先者跳出画面顶部且终点尚不可见时，镜头上移一级。
-## 开局倒计时结束后，岩浆驱动的持续上滚压力开始生效。
+## 分档上滚：默认固定视角；无尽模式解除终点线下限。
 
 signal scroll_started
 
@@ -17,6 +16,7 @@ signal scroll_started
 var _player1: Node2D
 var _player2: Node2D
 var _finish_y: float = 0.0
+var _unbounded_climb: bool = false
 var _scroll_active: bool = false
 var _elapsed: float = 0.0
 var _scroll_anchor_y: float = 0.0
@@ -24,6 +24,11 @@ var _base_cam_y: float = 2100.0
 var _min_cam_y: float = 960.0
 var _max_cam_y: float = 2100.0
 var _can_trigger_next_step: bool = true
+var _scroll_paused: bool = false
+
+
+func pause_scroll(paused: bool) -> void:
+	_scroll_paused = paused
 
 
 func _ready() -> void:
@@ -31,13 +36,14 @@ func _ready() -> void:
 	position.x = 540.0
 
 
-func setup(player1: Node2D, player2: Node2D, spawn_leader_y: float, finish_y: float) -> void:
+func setup(player1: Node2D, player2: Node2D, spawn_leader_y: float, finish_y: float, unbounded: bool = false) -> void:
 	_player1 = player1
 	_player2 = player2
 	_finish_y = finish_y
+	_unbounded_climb = unbounded
 	var half_viewport := get_viewport_rect().size.y * 0.5
 	_max_cam_y = _spawn_camera_y(spawn_leader_y)
-	_min_cam_y = maxf(half_viewport, _spawn_camera_y(finish_y))
+	_min_cam_y = half_viewport if unbounded else maxf(half_viewport, _spawn_camera_y(finish_y))
 	_base_cam_y = _max_cam_y
 	position.y = _base_cam_y
 
@@ -62,16 +68,24 @@ func get_lava_screen_fraction() -> float:
 	return lava_screen_fraction
 
 
-func reset_for_round(player1: Node2D, player2: Node2D, spawn_leader_y: float, finish_y: float) -> void:
+func get_leader_y() -> float:
+	if _player1 == null or _player2 == null:
+		return 0.0
+	return minf(_player1.global_position.y, _player2.global_position.y)
+
+
+func reset_for_round(player1: Node2D, player2: Node2D, spawn_leader_y: float, finish_y: float, unbounded: bool = false) -> void:
 	_player1 = player1
 	_player2 = player2
 	_finish_y = finish_y
+	_unbounded_climb = unbounded
 	_scroll_active = false
 	_elapsed = 0.0
 	_can_trigger_next_step = true
+	_scroll_paused = false
 	var half_viewport := get_viewport_rect().size.y * 0.5
 	_max_cam_y = _spawn_camera_y(spawn_leader_y)
-	_min_cam_y = maxf(half_viewport, _spawn_camera_y(finish_y))
+	_min_cam_y = half_viewport if unbounded else maxf(half_viewport, _spawn_camera_y(finish_y))
 	_base_cam_y = _max_cam_y
 	_scroll_anchor_y = _base_cam_y
 	position.y = _base_cam_y
@@ -83,6 +97,9 @@ func get_countdown_display() -> int:
 
 func _process(delta: float) -> void:
 	if _player1 == null or _player2 == null:
+		return
+
+	if _scroll_paused:
 		return
 
 	if not _scroll_active:
@@ -100,7 +117,10 @@ func _process(delta: float) -> void:
 		_scroll_anchor_y -= scroll_speed * delta
 		target_y = minf(_base_cam_y, _scroll_anchor_y)
 
-	target_y = clampf(target_y, _min_cam_y, _max_cam_y)
+	if _unbounded_climb:
+		target_y = minf(target_y, _base_cam_y)
+	else:
+		target_y = clampf(target_y, _min_cam_y, _max_cam_y)
 	position.y = lerpf(position.y, target_y, delta * follow_smoothing)
 
 
@@ -113,11 +133,11 @@ func _update_leader_step(leader_y: float) -> void:
 	if leader_y > reset_y:
 		_can_trigger_next_step = true
 
-	# 领先者已超出画面上沿：直接追焦，不再被「终点线已可见」卡住
 	if leader_y <= top_world_y - leader_offscreen_chase:
 		var chase_y := _spawn_camera_y(leader_y)
 		_base_cam_y = minf(_base_cam_y, chase_y)
-		_base_cam_y = maxf(_base_cam_y, _min_cam_y)
+		if not _unbounded_climb:
+			_base_cam_y = maxf(_base_cam_y, _min_cam_y)
 		return
 
 	if not _can_trigger_next_step:
@@ -126,7 +146,8 @@ func _update_leader_step(leader_y: float) -> void:
 	if leader_y <= trigger_y:
 		_can_trigger_next_step = false
 		_base_cam_y -= step_scroll_amount
-		_base_cam_y = maxf(_base_cam_y, _min_cam_y)
+		if not _unbounded_climb:
+			_base_cam_y = maxf(_base_cam_y, _min_cam_y)
 
 
 func _spawn_camera_y(leader_y: float) -> float:

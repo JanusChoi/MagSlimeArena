@@ -91,6 +91,8 @@ enum ArenaSide { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _score_p2: Label = $HUD/ScoreP2
 @onready var _round_label: Label = $HUD/RoundLabel
 @onready var _countdown_label: Label = $HUD/CountdownLabel
+@onready var _controls_hint_p1: Label = $HUD/ControlsHintP1
+@onready var _controls_hint_p2: Label = $HUD/ControlsHintP2
 @onready var _round_banner: Label = $HUD/RoundBanner
 @onready var _lava_visual: Control = $HUD/LavaOverlay
 @onready var _match_result: CanvasLayer = $MatchResult
@@ -105,12 +107,19 @@ enum ArenaSide { LEFT = -1, CENTER = 0, RIGHT = 1 }
 @onready var _left_wall: StaticBody2D = $LeftWall
 @onready var _right_wall: StaticBody2D = $RightWall
 @onready var _hook_fx: Node = $HookImpactFx
+@onready var _hp_p1: Label = $HUD/HPP1
+@onready var _hp_p2: Label = $HUD/HPP2
+@onready var _endless_chunks: Node = $EndlessChunks
+@onready var _pickup_spawner: Node = $PickupSpawner
+@onready var _pickups: Node2D = $Pickups
+@onready var _portals: Node2D = $Portals
 
 var _spawn_player_y: float = 2952.0
 var _platform_centers: Array[Vector2] = []
 var _platform_scales: Array[float] = []
 var _placed_anchor_positions: Array[Vector2] = []
 var _round_over: bool = false
+var _endless_respawn_busy: bool = false
 
 
 func _ready() -> void:
@@ -120,40 +129,105 @@ func _ready() -> void:
 	_menu_btn.pressed.connect(_on_menu)
 	_arena_camera.scroll_started.connect(_on_scroll_started)
 	_bootstrap_arena()
-	_refresh_score_hud()
 
 
 func _process(_delta: float) -> void:
 	if _round_over or GameSession.input_locked:
 		return
-	_finish_line.check_players(_player1, _player2)
+	if GameSession.is_level():
+		_finish_line.check_players(_player1, _player2)
 	_update_countdown_hud()
+
+
+func _is_endless() -> bool:
+	return GameSession.is_endless()
 
 
 func _bootstrap_arena() -> void:
 	_round_over = false
+	_endless_respawn_busy = false
 	GameSession.set_input_locked(false)
 	_sync_arena_geometry()
 	_build_staircase()
-	_build_scattered_anchors()
-	_setup_finish_line()
-	_finish_line.reset()
+	if _is_endless():
+		_clear_anchors()
+		_placed_anchor_positions.clear()
+	else:
+		_build_scattered_anchors()
+	if _is_endless():
+		_finish_line.visible = false
+		if _endless_chunks.has_method("reset_for_match"):
+			_endless_chunks.reset_for_match(self, _arena_camera, start_platform_y - PLAYER_STAND_OFFSET)
+		if _pickup_spawner.has_method("clear_all"):
+			_pickup_spawner.clear_all()
+		for child in _portals.get_children():
+			child.queue_free()
+	else:
+		_finish_line.visible = true
+		_setup_finish_line()
+		_finish_line.reset()
 	_spawn_player_y = start_platform_y - PLAYER_STAND_OFFSET
-	_arena_camera.reset_for_round(_player1, _player2, _spawn_player_y, _finish_line.finish_y)
+	var finish_y: float = _finish_line.finish_y if GameSession.is_level() else -1.0e9
+	_arena_camera.reset_for_round(_player1, _player2, _spawn_player_y, finish_y, _is_endless())
 	_place_players()
 	if _hazard.has_method("reset_for_round"):
 		_hazard.reset_for_round()
 	_hazard.setup(_arena_camera, _player1, _player2)
-	if not _hazard.player_eliminated.is_connected(_on_round_lost_by_lava):
-		_hazard.player_eliminated.connect(_on_round_lost_by_lava)
+	_connect_hazard_signals()
 	if _lava_visual and _lava_visual.has_method("set_scroll_active"):
 		_lava_visual.set_scroll_active(false)
-	if not _finish_line.player_crossed.is_connected(_on_round_won_by_finish):
-		_finish_line.player_crossed.connect(_on_round_won_by_finish)
+	if GameSession.is_level():
+		_connect_finish_signal(true)
+	else:
+		_connect_finish_signal(false)
 	if _hook_fx and _hook_fx.has_method("setup"):
 		_hook_fx.setup(_arena_camera)
 	if _hook_fx and _hook_fx.has_method("reset_for_round"):
 		_hook_fx.reset_for_round()
+	if _pickup_spawner.has_method("setup"):
+		_pickup_spawner.setup(self, _pickups)
+	_apply_mode_hud()
+
+
+func _clear_anchors() -> void:
+	for child in _anchors.get_children():
+		child.queue_free()
+
+
+func _connect_hazard_signals() -> void:
+	if _hazard.player_eliminated.is_connected(_on_round_lost_by_lava):
+		_hazard.player_eliminated.disconnect(_on_round_lost_by_lava)
+	if _hazard.player_lava_damaged.is_connected(_on_endless_lava_hit):
+		_hazard.player_lava_damaged.disconnect(_on_endless_lava_hit)
+	if GameSession.is_level():
+		_hazard.player_eliminated.connect(_on_round_lost_by_lava)
+	else:
+		_hazard.player_lava_damaged.connect(_on_endless_lava_hit)
+
+
+func _connect_finish_signal(enabled: bool) -> void:
+	if _finish_line.player_crossed.is_connected(_on_round_won_by_finish):
+		_finish_line.player_crossed.disconnect(_on_round_won_by_finish)
+	if enabled:
+		_finish_line.player_crossed.connect(_on_round_won_by_finish)
+
+
+func _apply_mode_hud() -> void:
+	var endless := _is_endless()
+	if _score_p1:
+		_score_p1.visible = not endless
+	if _score_p2:
+		_score_p2.visible = not endless
+	if _round_label:
+		_round_label.visible = not endless
+	if _hp_p1:
+		_hp_p1.visible = endless
+	if _hp_p2:
+		_hp_p2.visible = endless
+	if endless:
+		_refresh_hp_hud()
+	else:
+		_refresh_score_hud()
 
 
 func trigger_hook_impact(pull_direction: Vector2) -> void:
@@ -414,6 +488,246 @@ func _score_placement(prev_x: float, x: float, vert_step: float, _scale_x: float
 	return score
 
 
+func append_route_chunk(row_count: int, prev_p1: Vector2, prev_p2: Vector2, chunk_index: int) -> Dictionary:
+	var vert_step := _effective_route_vert_step()
+	var max_reach := impulse_max_range * ROUTE_REACH_SAFETY
+	var highest_y := prev_p1.y
+	var scatter_positions: Array[Vector2] = []
+	var route_ys: Array[float] = []
+
+	for i in row_count:
+		var row := chunk_index * row_count + i
+		var y := prev_p1.y - vert_step
+		route_ys.append(y)
+		var p1_x := P1_ROUTE_LANE_X + (route_horiz_zigzag if row % 2 == 0 else -route_horiz_zigzag * 0.45)
+		var p2_x := P2_ROUTE_LANE_X + (route_horiz_zigzag if row % 2 == 1 else -route_horiz_zigzag * 0.45)
+		var pos_p1 := Vector2(clampf(p1_x, 240.0, 470.0), y)
+		var pos_p2 := Vector2(clampf(p2_x, 610.0, 840.0), y - vert_step * 0.22)
+		pos_p1 = _clamp_anchor_to_reach(prev_p1, pos_p1, max_reach)
+		pos_p2 = _clamp_anchor_to_reach(prev_p2, pos_p2, max_reach)
+		_place_route_anchor(pos_p1, false)
+		_place_route_anchor(pos_p2, true)
+		scatter_positions.append(pos_p1)
+		scatter_positions.append(pos_p2)
+		prev_p1 = pos_p1
+		prev_p2 = pos_p2
+		highest_y = minf(highest_y, y)
+
+	_scatter_opposite_lane_anchors(route_ys, row_count, vert_step)
+	for pos in _placed_anchor_positions:
+		if pos.y <= highest_y + vert_step:
+			scatter_positions.append(pos)
+
+	return {
+		"prev_p1": prev_p1,
+		"prev_p2": prev_p2,
+		"highest_y": highest_y,
+		"scatter_positions": scatter_positions,
+	}
+
+
+func on_endless_chunk_spawned(result: Dictionary) -> void:
+	if _pickup_spawner.has_method("on_chunk_spawned"):
+		_pickup_spawner.on_chunk_spawned(result)
+
+
+func _on_endless_lava_hit(player_id: int) -> void:
+	if _round_over or _endless_respawn_busy:
+		return
+	_begin_endless_respawn_sequence(player_id)
+
+
+func _begin_endless_respawn_sequence(player_id: int) -> void:
+	_endless_respawn_busy = true
+	var player := _player1 if player_id == 1 else _player2
+	if player == null:
+		_endless_respawn_busy = false
+		return
+
+	GameSession.set_input_locked(true)
+	_set_players_frozen(true)
+	if _arena_camera.has_method("pause_scroll"):
+		_arena_camera.pause_scroll(true)
+
+	if player is RigidBody2D:
+		var body := player as RigidBody2D
+		body.linear_velocity = Vector2.ZERO
+		body.angular_velocity = 0.0
+
+	var still_alive := GameSession.take_lava_damage(player_id)
+	_refresh_hp_hud()
+
+	await _show_endless_fall_banner(player_id, still_alive)
+
+	if _round_over:
+		return
+
+	if not still_alive:
+		_endless_respawn_busy = false
+		if _arena_camera.has_method("pause_scroll"):
+			_arena_camera.pause_scroll(false)
+		_set_players_frozen(false)
+		_end_endless_game(2 if player_id == 1 else 1)
+		return
+
+	_respawn_player_above_lava(player_id, false)
+	_set_players_frozen(true)
+	await _run_endless_resume_countdown()
+
+	if _round_over:
+		return
+
+	_cleanup_endless_respawn_freeze()
+	_begin_respawn_protection(player_id)
+	_launch_respawned_player(player_id)
+	_endless_respawn_busy = false
+
+
+func _set_players_frozen(frozen: bool) -> void:
+	for player in [_player1, _player2]:
+		if player == null or not is_instance_valid(player):
+			continue
+		if player.has_method("is_eliminated") and player.is_eliminated():
+			continue
+		if player is RigidBody2D:
+			var body := player as RigidBody2D
+			body.freeze = frozen
+			if frozen:
+				body.linear_velocity = Vector2.ZERO
+				body.angular_velocity = 0.0
+
+
+func _show_endless_fall_banner(player_id: int, still_alive: bool) -> void:
+	if _countdown_label:
+		_countdown_label.visible = false
+	if _round_banner:
+		if still_alive:
+			_round_banner.text = "%s FELL!  %s" % [
+				GameSession.player_tag(player_id),
+				GameSession.hp_hearts(player_id),
+			]
+		else:
+			_round_banner.text = "%s OUT!" % GameSession.player_tag(player_id)
+		_round_banner.visible = true
+	await get_tree().create_timer(1.2).timeout
+	if _round_banner:
+		_round_banner.visible = false
+
+
+func _run_endless_resume_countdown() -> void:
+	if _countdown_label == null:
+		await get_tree().create_timer(3.0).timeout
+		return
+	for i in [3, 2, 1]:
+		if _round_over:
+			return
+		_countdown_label.text = str(i)
+		_countdown_label.visible = true
+		await get_tree().create_timer(1.0).timeout
+	_countdown_label.visible = false
+
+
+func _launch_respawned_player(player_id: int) -> void:
+	var player := _player1 if player_id == 1 else _player2
+	if player is RigidBody2D:
+		var body := player as RigidBody2D
+		body.sleeping = false
+		body.linear_velocity = Vector2(0.0, -720.0)
+
+
+func _begin_respawn_protection(player_id: int) -> void:
+	var player := _player1 if player_id == 1 else _player2
+	if player == null:
+		return
+	var invuln := 2.0
+	var grace := 2.5
+	if _hazard != null:
+		invuln = _hazard.endless_respawn_invuln
+		grace = maxf(invuln + 0.5, _hazard.endless_hit_cooldown)
+	if player.has_method("start_respawn_invuln"):
+		player.start_respawn_invuln(invuln, true)
+	if _hazard.has_method("reset_player_after_respawn"):
+		_hazard.reset_player_after_respawn(player_id, grace)
+
+
+func _cleanup_endless_respawn_freeze() -> void:
+	_set_players_frozen(false)
+	if _arena_camera.has_method("pause_scroll"):
+		_arena_camera.pause_scroll(false)
+	GameSession.set_input_locked(false)
+	if _countdown_label:
+		_countdown_label.visible = false
+
+
+func _respawn_player_above_lava(player_id: int, apply_launch_velocity: bool = true) -> void:
+	var player := _player1 if player_id == 1 else _player2
+	if player == null:
+		return
+	var surface_y: float = _arena_camera.get_lava_surface_world_y()
+	var view_h := get_viewport_rect().size.y
+	var respawn_y := surface_y - view_h * 0.35
+	var spawn_x := P1_SPAWN_X if player_id == 1 else P2_SPAWN_X
+	player.global_position = Vector2(spawn_x, respawn_y)
+	var hold_frozen := not apply_launch_velocity
+	if player.has_method("reset_for_respawn"):
+		player.reset_for_respawn(hold_frozen)
+	if player is RigidBody2D:
+		var body := player as RigidBody2D
+		body.sleeping = false
+		if apply_launch_velocity:
+			body.freeze = false
+			body.linear_velocity = Vector2(0.0, -720.0)
+		else:
+			body.linear_velocity = Vector2.ZERO
+			body.freeze = true
+	if apply_launch_velocity:
+		var invuln := 2.0
+		var grace := 2.5
+		if _hazard != null:
+			invuln = _hazard.endless_respawn_invuln
+			grace = maxf(invuln + 0.5, _hazard.endless_hit_cooldown)
+		if player.has_method("start_respawn_invuln"):
+			player.start_respawn_invuln(invuln)
+		if _hazard.has_method("reset_player_after_respawn"):
+			_hazard.reset_player_after_respawn(player_id, grace)
+
+
+func _end_endless_game(winner_id: int) -> void:
+	if _round_over:
+		return
+	_round_over = true
+	_endless_respawn_busy = false
+	if _arena_camera.has_method("pause_scroll"):
+		_arena_camera.pause_scroll(false)
+	GameSession.set_input_locked(true)
+	if _hazard.has_method("set_round_over"):
+		_hazard.set_round_over(true)
+	var loser_id := 2 if winner_id == 1 else 1
+	var loser := _player1 if loser_id == 1 else _player2
+	if loser != null and loser.has_method("set_eliminated"):
+		loser.set_eliminated()
+	for player in [_player1, _player2]:
+		if player is RigidBody2D:
+			player.linear_velocity = Vector2.ZERO
+			player.angular_velocity = 0.0
+	_show_endless_result(winner_id)
+
+
+func _show_endless_result(winner_id: int) -> void:
+	if _match_winner:
+		_match_winner.text = "%s WINS" % GameSession.player_tag(winner_id)
+	if _match_score:
+		_match_score.text = "ENDLESS  ·  " + GameSession.get_score_label()
+	_match_result.visible = true
+
+
+func _refresh_hp_hud() -> void:
+	if _hp_p1:
+		_hp_p1.text = GameSession.hp_hearts(1)
+	if _hp_p2:
+		_hp_p2.text = GameSession.hp_hearts(2)
+
+
 func _build_scattered_anchors() -> void:
 	for child in _anchors.get_children():
 		child.queue_free()
@@ -603,7 +917,10 @@ func _revive_player_at_spawn(player: SlimePlayer, spawn_x: float) -> void:
 
 func _reset_arena_for_next_round() -> void:
 	_bootstrap_arena()
-	_refresh_score_hud()
+	if GameSession.is_endless():
+		_refresh_hp_hud()
+	else:
+		_refresh_score_hud()
 
 
 func _refresh_score_hud() -> void:
@@ -619,14 +936,23 @@ func _update_countdown_hud() -> void:
 	if _countdown_label == null or _arena_camera == null:
 		return
 	var remaining: int = _arena_camera.get_countdown_display()
-	if remaining > 0 and not _arena_camera.is_scrolling():
+	var show_hints: bool = remaining > 0 and not _arena_camera.is_scrolling()
+	if show_hints:
 		_countdown_label.text = str(remaining)
 		_countdown_label.visible = true
 	else:
 		_countdown_label.visible = false
+	if _controls_hint_p1:
+		_controls_hint_p1.visible = show_hints
+	if _controls_hint_p2:
+		_controls_hint_p2.visible = show_hints
 
 
 func _on_scroll_started() -> void:
+	if _controls_hint_p1:
+		_controls_hint_p1.visible = false
+	if _controls_hint_p2:
+		_controls_hint_p2.visible = false
 	if _lava_visual and _lava_visual.has_method("set_scroll_active"):
 		_lava_visual.set_scroll_active(true)
 
@@ -686,7 +1012,10 @@ func _show_match_result() -> void:
 
 func _on_play_again() -> void:
 	_match_result.visible = false
-	GameSession.start_new_match()
+	if GameSession.is_endless():
+		GameSession.start_endless_match()
+	else:
+		GameSession.start_new_match()
 	_reset_arena_for_next_round()
 
 

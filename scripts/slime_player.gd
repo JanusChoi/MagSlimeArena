@@ -77,6 +77,19 @@ var _impulse_link_timer: float = 0.0
 var _impulse_link_to_player: bool = false
 var _magnet_flash_timer: float = 0.0
 var _lava_heat: float = 0.0
+var _base_mass: float = 1.0
+var _mass_buff_timer: float = 0.0
+var _mass_buff_active: bool = false
+var _overdrive_charges: int = 0
+var _invuln_timer: float = 0.0
+var _saved_collision_layer: int = 2
+var _visual_scale_mul: float = 1.0
+
+const _MASS_BUFF_MULTIPLIER := 3.0
+const _MASS_BUFF_DURATION := 5.0
+const _MASS_VISUAL_SCALE := 1.35
+const _OVERDRIVE_CHARGES := 3
+const _PORTAL_SCENE := preload("res://scenes/polarity_portal.tscn")
 
 const _INPUT_KEYS := {
 	1: {
@@ -104,6 +117,7 @@ func _ready() -> void:
 	add_to_group("players")
 	add_to_group("magnetic_entities")
 	polarity = 1 if player_id == 1 else -1
+	_base_mass = mass
 	_jumps_remaining = max_jumps
 	_update_polarity_label()
 	_apply_player_color()
@@ -114,6 +128,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_invulnerability(delta)
+	_update_mass_buff(delta)
 	_update_squash_stretch(delta)
 	_update_magnet_link(delta)
 	_update_anchor_highlight(delta)
@@ -187,7 +203,9 @@ func _trigger_anchor_impulse() -> void:
 	if arena == null:
 		return
 
-	var anchor := _find_closest_anchor_in_range(arena.impulse_max_range)
+	var use_overdrive := _overdrive_charges > 0
+	var search_range := INF if use_overdrive else arena.impulse_max_range
+	var anchor := _find_closest_anchor_in_range(search_range)
 	if anchor == null:
 		return
 
@@ -200,12 +218,18 @@ func _trigger_anchor_impulse() -> void:
 	var interaction: int = polarity * _MagneticUtilsScript.get_polarity(anchor)
 	sleeping = false
 
+	var mass_scale := sqrt(mass / maxf(_base_mass, 0.001))
+	var speed_mul := 1.0 / maxf(mass_scale, 0.35)
+	if use_overdrive:
+		speed_mul *= 2.0
+		_overdrive_charges -= 1
+
 	if interaction < 0:
 		var fly_dir := (dir + Vector2(0.0, -arena.impulse_up_bias)).normalized()
-		var speed := arena.impulse_attract_speed + dist * arena.impulse_distance_bonus
+		var speed := (arena.impulse_attract_speed + dist * arena.impulse_distance_bonus) * speed_mul
 		linear_velocity = fly_dir * speed
 	else:
-		var speed := arena.impulse_repel_speed + dist * arena.impulse_distance_bonus * 0.6
+		var speed := (arena.impulse_repel_speed + dist * arena.impulse_distance_bonus * 0.6) * speed_mul
 		linear_velocity = -dir * speed
 
 	_flash_anchor(anchor)
@@ -236,26 +260,143 @@ func _trigger_player_impulse() -> void:
 	if opponent.global_position.y < global_position.y:
 		pull_dir = (pull_dir + Vector2(0.0, arena.player_hook_target_down_bias)).normalized()
 
-	# 主效果：对手被拽向钩人者（落后者在下方时 ≈ 把领先者往下拉）
+	var opp_mass := _base_mass
+	if opponent is RigidBody2D:
+		opp_mass = (opponent as RigidBody2D).mass
+	var mass_ratio := mass / maxf(opp_mass, 0.001)
+
 	if opponent is RigidBody2D:
 		var opp_body := opponent as RigidBody2D
 		opp_body.sleeping = false
-		opp_body.linear_velocity = pull_dir * base_speed * arena.player_hook_target_speed_scale
+		var target_speed := base_speed * arena.player_hook_target_speed_scale * clampf(mass_ratio, 0.5, 3.0)
+		opp_body.linear_velocity = pull_dir * target_speed
 
-	# 副效果：钩人者自身仅弱吸向对手
 	sleeping = false
 	var self_dir := (dir + Vector2(0.0, -arena.player_impulse_up_bias)).normalized()
-	var self_speed := base_speed * arena.player_hook_self_speed_scale
+	var self_speed := base_speed * arena.player_hook_self_speed_scale / clampf(mass_ratio, 1.0, 3.0)
 	linear_velocity = self_dir * self_speed
 
 	if arena.has_method("trigger_hook_impact"):
 		arena.trigger_hook_impact(pull_dir)
+
+	GameAudio.play_hook_sfx()
 
 	_impulse_link_target = opponent
 	_impulse_link_to_player = true
 	_impulse_link_timer = 0.35
 	_magnet_flash_timer = 0.25
 	_grapple_cooldown = arena.player_impulse_cooldown
+
+
+func apply_pickup(pickup_type: int, pickup_pos: Vector2) -> void:
+	match pickup_type:
+		ArenaPickup.PickupType.MASS_AMPLIFIER:
+			_apply_mass_buff()
+		ArenaPickup.PickupType.POLARITY_OVERDRIVE:
+			_overdrive_charges = _OVERDRIVE_CHARGES
+		ArenaPickup.PickupType.PORTAL_TRAP:
+			_spawn_portal_trap(pickup_pos)
+		_:
+			pass
+
+
+func flip_polarity() -> void:
+	polarity *= -1
+	_apply_player_color()
+	_magnet_flash_timer = 0.35
+
+
+func start_respawn_invuln(duration: float, keep_velocity: bool = false) -> void:
+	_invuln_timer = duration
+	_saved_collision_layer = collision_layer
+	collision_layer = 2
+	if not keep_velocity:
+		linear_velocity = Vector2.ZERO
+	angular_velocity = 0.0
+	set_lava_heat(0.0)
+	sleeping = false
+	freeze = false
+
+
+func is_invulnerable() -> bool:
+	return _invuln_timer > 0.0
+
+
+func reset_for_respawn(keep_frozen: bool = false) -> void:
+	_lava_heat = 0.0
+	_impulse_link_target = null
+	_impulse_link_timer = 0.0
+	_grapple_cooldown = 0.0
+	visible = true
+	if not keep_frozen:
+		freeze = false
+	sleeping = false
+	linear_velocity = Vector2.ZERO
+	angular_velocity = 0.0
+	if _visual_root:
+		_visual_root.modulate = Color.WHITE
+	if _sprite:
+		_sprite.modulate = Color.WHITE
+
+
+func _apply_mass_buff() -> void:
+	_mass_buff_active = true
+	_mass_buff_timer = _MASS_BUFF_DURATION
+	mass = _base_mass * _MASS_BUFF_MULTIPLIER
+	_visual_scale_mul = _MASS_VISUAL_SCALE
+	_apply_visual_scale_mul()
+
+
+func _update_mass_buff(delta: float) -> void:
+	if not _mass_buff_active:
+		return
+	_mass_buff_timer -= delta
+	if _mass_buff_timer <= 0.0:
+		_clear_mass_buff()
+
+
+func _clear_mass_buff() -> void:
+	_mass_buff_active = false
+	_mass_buff_timer = 0.0
+	mass = _base_mass
+	_visual_scale_mul = 1.0
+	_apply_visual_scale_mul()
+
+
+func _apply_visual_scale_mul() -> void:
+	if _sprite == null:
+		return
+	var source_h: float = idle_source_height
+	var scale_factor: float = slime_display_height / maxf(source_h, 1.0) * _visual_scale_mul
+	_sprite.scale = Vector2(scale_factor, scale_factor)
+
+
+func _update_invulnerability(delta: float) -> void:
+	if _invuln_timer <= 0.0:
+		return
+	_invuln_timer -= delta
+	if _visual_root:
+		var blink := 0.35 + 0.65 * (0.5 + 0.5 * sin(_invuln_timer * 24.0))
+		_visual_root.modulate = Color(1.0, 1.0, 1.0, blink)
+	if _invuln_timer <= 0.0:
+		collision_layer = _saved_collision_layer if _saved_collision_layer > 0 else 2
+		if _visual_root:
+			_visual_root.modulate = Color.WHITE
+
+
+func _spawn_portal_trap(from_pos: Vector2) -> void:
+	var arena := _arena()
+	if arena == null:
+		return
+	var portal: Area2D = _PORTAL_SCENE.instantiate()
+	portal.global_position = from_pos + Vector2(randf_range(-200.0, 200.0), randf_range(-150.0, 150.0))
+	portal.global_position.x = clampf(portal.global_position.x, 180.0, 900.0)
+	arena.get_node("Portals").add_child(portal)
+
+
+func _clear_endless_buffs() -> void:
+	_clear_mass_buff()
+	_overdrive_charges = 0
 
 
 func _find_opponent_in_range(max_range: float) -> Node2D:
@@ -320,7 +461,7 @@ func set_lava_heat(heat: float) -> void:
 
 
 func apply_lava_sink(heat: float, depth: float, delta: float) -> void:
-	if _eliminated or heat <= 0.01:
+	if _eliminated or _invuln_timer > 0.0 or heat <= 0.01:
 		return
 	sleeping = false
 	var sink := clampf(heat + depth / 120.0, 0.0, 1.4)
@@ -334,6 +475,8 @@ func apply_lava_sink(heat: float, depth: float, delta: float) -> void:
 func reset_for_round() -> void:
 	_eliminated = false
 	_lava_heat = 0.0
+	_invuln_timer = 0.0
+	_clear_endless_buffs()
 	_clear_anchor_highlight()
 	_jump_granted_anchors.clear()
 	_jumps_remaining = max_jumps
@@ -357,8 +500,7 @@ func reset_for_round() -> void:
 	if _sprite:
 		_sprite.visible = true
 		_sprite.modulate = Color.WHITE
-		if _sprite.sprite_frames != null and _sprite.sprite_frames.has_animation("idle"):
-			_sprite.play("idle")
+		_apply_player_sprite()
 	if _magnet_ring:
 		_magnet_ring.visible = false
 
@@ -679,14 +821,12 @@ func _apply_player_color() -> void:
 func _apply_player_sprite() -> void:
 	if _sprite == null:
 		return
-	if player_id == 1:
+	if polarity > 0:
 		_sprite.sprite_frames = _get_blue_idle_frames()
 	else:
 		_sprite.sprite_frames = _get_red_idle_frames()
 	_sprite.play("idle")
-	var source_h: float = idle_source_height
-	var scale_factor: float = slime_display_height / maxf(source_h, 1.0)
-	_sprite.scale = Vector2(scale_factor, scale_factor)
+	_apply_visual_scale_mul()
 	_sprite.position = slime_sprite_offset
 	_sprite.centered = true
 

@@ -22,6 +22,7 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+GameAudio="*res://scripts/game_audio.gd"
 GameSession="*res://scripts/game_session.gd"
 
 [display]

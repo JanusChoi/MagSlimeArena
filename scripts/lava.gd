@@ -1,13 +1,15 @@
 extends Node
-## 屏幕固定岩浆：顶边为液面；进入预警带会「发烫」，深没即淘汰。
+## 屏幕固定岩浆：顶边为液面；关卡模式即死，无尽模式扣血重生。
 
 signal player_eliminated(fallen_player_id: int, winner_id: int)
+signal player_lava_damaged(player_id: int)
 
 @export var player_radius: float = 36.0
 @export var warning_margin: float = 110.0
 @export var burn_seconds: float = 0.28
-## 脚深入液面超过此值立即淘汰（防止钩出 lava）
 @export var instant_kill_depth: float = 52.0
+@export var endless_hit_cooldown: float = 2.2
+@export var endless_respawn_invuln: float = 2.0
 
 var _camera: Camera2D
 var _player1: Node2D
@@ -15,6 +17,8 @@ var _player2: Node2D
 var _round_over: bool = false
 var _p1_burn: float = 0.0
 var _p2_burn: float = 0.0
+var _p1_lava_cd: float = 0.0
+var _p2_lava_cd: float = 0.0
 
 
 func setup(camera: Camera2D, player1: Node2D, player2: Node2D) -> void:
@@ -27,11 +31,16 @@ func reset_for_round() -> void:
 	_round_over = false
 	_p1_burn = 0.0
 	_p2_burn = 0.0
+	_p1_lava_cd = 0.0
+	_p2_lava_cd = 0.0
 	_apply_heat(_player1, 0.0)
 	_apply_heat(_player2, 0.0)
 
 
 func _physics_process(delta: float) -> void:
+	_p1_lava_cd = maxf(_p1_lava_cd - delta, 0.0)
+	_p2_lava_cd = maxf(_p2_lava_cd - delta, 0.0)
+
 	if _round_over or _camera == null or GameSession.input_locked:
 		return
 
@@ -49,10 +58,28 @@ func _process_player(player: Node2D, player_id: int, surface_y: float, delta: fl
 		return
 	if player.has_method("is_eliminated") and player.is_eliminated():
 		return
+	if player.has_method("is_invulnerable") and player.is_invulnerable():
+		return
 
 	var feet_y := player.global_position.y + player_radius
 	var depth := feet_y - surface_y
 	var heat_ref := _burn_ref(player_id)
+
+	if GameSession.is_endless():
+		if depth >= instant_kill_depth and _lava_cd(player_id) <= 0.0:
+			_set_burn(player_id, 1.0)
+			_apply_heat(player, 1.0)
+			_set_lava_cd(player_id, endless_hit_cooldown)
+			player_lava_damaged.emit(player_id)
+			return
+		if depth >= -warning_margin:
+			var warn := clampf((depth + warning_margin) / warning_margin, 0.0, 1.0)
+			heat_ref = lerpf(heat_ref, warn * 0.65, delta * 6.0)
+		else:
+			heat_ref = maxf(heat_ref - delta * 4.0, 0.0)
+		_set_burn(player_id, heat_ref)
+		_apply_heat(player, heat_ref)
+		return
 
 	if depth >= instant_kill_depth:
 		_set_burn(player_id, 1.0)
@@ -66,7 +93,7 @@ func _process_player(player: Node2D, player_id: int, surface_y: float, delta: fl
 		_apply_heat(player, heat_ref)
 		if player.has_method("apply_lava_sink"):
 			player.apply_lava_sink(heat_ref, depth, delta)
-		if heat_ref >= 1.0:
+		if not GameSession.is_endless() and heat_ref >= 1.0:
 			_eliminate(player)
 		return
 
@@ -78,6 +105,17 @@ func _process_player(player: Node2D, player_id: int, surface_y: float, delta: fl
 
 	_set_burn(player_id, heat_ref)
 	_apply_heat(player, heat_ref)
+
+
+func _lava_cd(player_id: int) -> float:
+	return _p1_lava_cd if player_id == 1 else _p2_lava_cd
+
+
+func _set_lava_cd(player_id: int, value: float) -> void:
+	if player_id == 1:
+		_p1_lava_cd = value
+	else:
+		_p2_lava_cd = value
 
 
 func _decay_all_heat(delta: float) -> void:
@@ -103,6 +141,17 @@ func _set_burn(player_id: int, value: float) -> void:
 func _apply_heat(player: Node2D, heat: float) -> void:
 	if player != null and player.has_method("set_lava_heat"):
 		player.set_lava_heat(heat)
+
+
+func set_round_over(value: bool) -> void:
+	_round_over = value
+
+
+func reset_player_after_respawn(player_id: int, grace_seconds: float) -> void:
+	var player: Node2D = _player1 if player_id == 1 else _player2
+	_set_burn(player_id, 0.0)
+	_set_lava_cd(player_id, grace_seconds)
+	_apply_heat(player, 0.0)
 
 
 func _eliminate(player: Node2D) -> void:
